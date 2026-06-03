@@ -3371,9 +3371,13 @@ fun PasswordConfigurator(viewModel: DashboardViewModel, themeState: ThemeState) 
         }
         Button(
             onClick = {
-                val clipManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipManager.setPrimaryClip(ClipData.newPlainText("password", passResult))
-                Toast.makeText(context, "Password copied!", Toast.LENGTH_SHORT).show()
+                try {
+                    val clipManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    clipManager?.setPrimaryClip(ClipData.newPlainText("password", passResult))
+                    Toast.makeText(context, "Password copied!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Failed to copy password", Toast.LENGTH_SHORT).show()
+                }
                 viewModel.playTickTone(ToneGenerator.TONE_PROP_BEEP2)
             },
             modifier = Modifier.weight(1f),
@@ -3917,11 +3921,13 @@ fun FocalLockoutBodyguardOverlay(
                 holdTicks += 2f
                 if (holdTicks.toInt() % 15 == 0) {
                     try {
-                        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(22, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                        } else {
-                            vibrator.vibrate(22)
+                        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                        if (vibrator != null) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                vibrator.vibrate(android.os.VibrationEffect.createOneShot(22, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                            } else {
+                                vibrator.vibrate(22)
+                            }
                         }
                     } catch (e: Exception) {}
                 }

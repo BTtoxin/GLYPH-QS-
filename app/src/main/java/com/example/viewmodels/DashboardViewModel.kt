@@ -270,6 +270,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _lastBlockedApp = MutableStateFlow<String?>(null)
     val lastBlockedApp = _lastBlockedApp.asStateFlow()
 
+    private var lastBlockedPkg: String? = null
+    private var lastBlockTimestamp: Long = 0L
+
     // Map application package to a friendly name for blocking alert
     fun getFriendlyAppName(pkg: String): String {
         return when {
@@ -304,18 +307,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun hasUsageStatsPermission(): Boolean {
-        val context = getApplication<Application>()
-        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager ?: return false
-        val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-            appOps.checkOpNoThrow(
-                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                android.os.Process.myUid(),
-                context.packageName
-            )
-        } else {
-            android.app.AppOpsManager.MODE_ALLOWED
+        return try {
+            val context = getApplication<Application>()
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager ?: return false
+            val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                appOps.checkOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    context.packageName
+                )
+            } else {
+                android.app.AppOpsManager.MODE_ALLOWED
+            }
+            mode == android.app.AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) {
+            false
         }
-        return mode == android.app.AppOpsManager.MODE_ALLOWED
     }
 
     fun hasDndPermission(): Boolean {
@@ -992,9 +999,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private fun toggleFlashlight(context: Context, state: Boolean) {
         try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = cameraManager.cameraIdList[0]
-            cameraManager.setTorchMode(cameraId, state)
-            isFlashlightOn = state
+            val cameraId = cameraManager.cameraIdList.getOrNull(0)
+            if (cameraId != null) {
+                cameraManager.setTorchMode(cameraId, state)
+                isFlashlightOn = state
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -1129,8 +1138,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                                             // Whitelisted: Allow user to work
                                         } else {
                                             // Blocked app or game! Re-assert lockout and trigger overlay block screen!
-                                            incrementBlockedAppsCount(top)
-                                            launchLockoutScreen(application, top)
+                                            val now = System.currentTimeMillis()
+                                            if (top != lastBlockedPkg || (now - lastBlockTimestamp) > 4000) {
+                                                lastBlockedPkg = top
+                                                lastBlockTimestamp = now
+                                                incrementBlockedAppsCount(top)
+                                                launchLockoutScreen(application, top)
+                                            }
                                         }
                                     }
                                 }
@@ -1687,7 +1701,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 65)
             }
             toneGen?.startTone(pitch, 50)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
@@ -2012,14 +2026,27 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         if (vibrator != null && vibrator.hasVibrator()) {
             try {
-                when (pattern) {
-                    "TICK" -> vibrator.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
-                    "RUMBLE" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 100, 50, 100, 50, 100), -1))
-                    "DOUBLE_TAP" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 80, 80), -1))
-                    "SWEEP" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 50, 50, 80, 50, 120), -1))
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    when (pattern) {
+                        "TICK" -> vibrator.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
+                        "RUMBLE" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 100, 50, 100, 50, 100), -1))
+                        "DOUBLE_TAP" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 80, 80), -1))
+                        "SWEEP" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 50, 50, 80, 50, 120), -1))
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    when (pattern) {
+                        "TICK" -> vibrator.vibrate(80)
+                        "RUMBLE" -> vibrator.vibrate(longArrayOf(0, 100, 50, 100, 50, 100), -1)
+                        "DOUBLE_TAP" -> vibrator.vibrate(longArrayOf(0, 80, 80, 80), -1)
+                        "SWEEP" -> vibrator.vibrate(longArrayOf(0, 50, 50, 80, 50, 120), -1)
+                    }
                 }
             } catch (e: Exception) {
-                vibrator.vibrate(100)
+                try {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(100)
+                } catch (ex: Exception) {}
             }
         }
         // Play synthesizer audio feedback synchronized
@@ -2119,12 +2146,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             toneGen?.release()
             toneGen = null
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
         try {
             getApplication<Application>().unregisterReceiver(batteryReceiver)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
