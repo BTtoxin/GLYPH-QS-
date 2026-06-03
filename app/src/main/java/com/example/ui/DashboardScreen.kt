@@ -92,6 +92,7 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
 
     var isBooting by remember { mutableStateOf(true) }
     var bootFinishTriggered by remember { mutableStateOf(false) }
+    var showDebugOverlay by remember { mutableStateOf(false) }
 
     val bootAlpha by animateFloatAsState(
         targetValue = if (bootFinishTriggered) 0f else 1f,
@@ -145,7 +146,26 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
         topBar = {
             CenterAlignedTopAppBar(
                 title = { 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    var developerTappingCount by remember { mutableStateOf(0) }
+                    val context = LocalContext.current
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            developerTappingCount++
+                            if (developerTappingCount >= 5) {
+                                showDebugOverlay = !showDebugOverlay
+                                developerTappingCount = 0
+                                Toast.makeText(
+                                    context,
+                                    if (showDebugOverlay) "🛠️ Developer Debug Console Opened" else "🛠️ Developer Debug Console Closed",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    ) {
                         Text(
                             text = "Glyph QS",
                             fontWeight = FontWeight.Black,
@@ -206,6 +226,7 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("• Tap cards directly to toggle state, load commands, or open dials.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("• Click 'Edit Layout' below to swap, resize, and rename any tile.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("• Tap 'Glyph QS' title 5 times to show hidden developer console overlay.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (isDeepFocusActive) {
                         Text("• DEEP FOCUS ENGAGED: Workspace restricted. Tap Focus to cancel.", fontSize = 11.sp, color = themeState.accentColor.color, fontWeight = FontWeight.Bold)
                     }
@@ -616,109 +637,121 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                 }
             }
 
-            // The Bento grid
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(gridMode),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize()
+            // The Bento grid wrapped in an elegant localized Error Boundary component
+            val componentErrorTriggered by viewModel.componentErrorTriggered.collectAsState()
+            
+            ComponentErrorBoundary(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                fallbackLabel = "BENTO GRID SUBSYSTEM TIMEOUT",
+                onReset = { viewModel.triggerComponentError(false) }
             ) {
-                itemsIndexed(
-                    items = tiles,
-                    key = { _, item -> item.id },
-                    span = { _, tile ->
-                        val boundedSpan = minOf(tile.size.span, gridMode)
-                        GridItemSpan(boundedSpan)
-                    }
-                ) { index, tile ->
-                    val isSelectedInEdit = selectedSwapId == tile.id
-                    val customLabel = customNames[tile.id] ?: tile.type.displayName
+                if (componentErrorTriggered) {
+                    throw RuntimeException("Simulated Bento Grid rendering error occurred inside localized layout segment.")
+                }
 
-                    var cardVisible by remember { mutableStateOf(false) }
-                    LaunchedEffect(Unit) {
-                        delay(20L + index * 25L)
-                        cardVisible = true
-                    }
-                    val cardScale by animateFloatAsState(
-                        targetValue = if (cardVisible) 1.0f else 0.9f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMedium
-                        ),
-                        label = "card_scale"
-                    )
-                    val cardAlpha by animateFloatAsState(
-                        targetValue = if (cardVisible) 1.0f else 0.0f,
-                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                        label = "card_alpha"
-                    )
-                    val cardOffsetY by animateDpAsState(
-                        targetValue = if (cardVisible) 0.dp else 22.dp,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioLowBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        ),
-                        label = "card_offset_y"
-                    )
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(gridMode),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    itemsIndexed(
+                        items = tiles,
+                        key = { _, item -> item.id },
+                        span = { _, tile ->
+                            val boundedSpan = minOf(tile.size.span, gridMode)
+                            GridItemSpan(boundedSpan)
+                        }
+                    ) { index, tile ->
+                        val isSelectedInEdit = selectedSwapId == tile.id
+                        val customLabel = customNames[tile.id] ?: tile.type.displayName
 
-                    Box(modifier = Modifier.graphicsLayer {
-                        scaleX = cardScale
-                        scaleY = cardScale
-                        alpha = cardAlpha
-                        translationY = cardOffsetY.toPx()
-                    }) {
-                        TileItem(
-                            tile = tile,
-                            customLabel = customLabel,
-                            isDeepFocusActive = isDeepFocusActive,
-                            themeState = themeState,
-                            isSelectedInEdit = isSelectedInEdit,
-                            onLongClick = {
-                                val currentSz = tile.size
-                                val nextSz = if (currentSz == TileSize.SMALL) TileSize.LARGE_SQUARE else TileSize.SMALL
-                                viewModel.resizeTile(tile.id, nextSz)
-                            },
-                            onClick = {
-                                if (isEditMode) {
-                                    viewModel.handleTileClickInEditMode(tile.id)
-                                } else {
-                                    // Decide if simple switch or open dial details dialog
-                                    if (tile.type.hasDetailedControl()) {
-                                        activeControlTile = tile
+                        var cardVisible by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            delay(20L + index * 25L)
+                            cardVisible = true
+                        }
+                        val cardScale by animateFloatAsState(
+                            targetValue = if (cardVisible) 1.0f else 0.9f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            ),
+                            label = "card_scale"
+                        )
+                        val cardAlpha by animateFloatAsState(
+                            targetValue = if (cardVisible) 1.0f else 0.0f,
+                            animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                            label = "card_alpha"
+                        )
+                        val cardOffsetY by animateDpAsState(
+                            targetValue = if (cardVisible) 0.dp else 22.dp,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioLowBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            ),
+                            label = "card_offset_y"
+                        )
+
+                        Box(modifier = Modifier.graphicsLayer {
+                            scaleX = cardScale
+                            scaleY = cardScale
+                            alpha = cardAlpha
+                            translationY = cardOffsetY.toPx()
+                        }) {
+                            TileItem(
+                                tile = tile,
+                                customLabel = customLabel,
+                                isDeepFocusActive = isDeepFocusActive,
+                                themeState = themeState,
+                                isSelectedInEdit = isSelectedInEdit,
+                                onLongClick = {
+                                    val currentSz = tile.size
+                                    val nextSz = if (currentSz == TileSize.SMALL) TileSize.LARGE_SQUARE else TileSize.SMALL
+                                    viewModel.resizeTile(tile.id, nextSz)
+                                },
+                                onClick = {
+                                    if (isEditMode) {
+                                        viewModel.handleTileClickInEditMode(tile.id)
                                     } else {
-                                        viewModel.triggerTileAction(tile.id)
+                                        // Decide if simple switch or open dial details dialog
+                                        if (tile.type.hasDetailedControl()) {
+                                            activeControlTile = tile
+                                        } else {
+                                            viewModel.triggerTileAction(tile.id)
+                                        }
                                     }
                                 }
-                            }
+                            )
+                        }
+                    }
+
+                    // 1. Dot-matrix Quick Settings panel
+                    item(span = { GridItemSpan(gridMode) }) {
+                        QuickSettingsPanel(
+                            viewModel = viewModel,
+                            themeState = themeState,
+                            modifier = Modifier.padding(top = 10.dp)
                         )
                     }
-                }
 
-                // 1. Dot-matrix Quick Settings panel
-                item(span = { GridItemSpan(gridMode) }) {
-                    QuickSettingsPanel(
-                        viewModel = viewModel,
-                        themeState = themeState,
-                        modifier = Modifier.padding(top = 10.dp)
-                    )
-                }
+                    // 2. System performance diagnostics
+                    item(span = { GridItemSpan(gridMode) }) {
+                        PerformanceMetricsWidget(
+                            viewModel = viewModel,
+                            themeState = themeState,
+                            modifier = Modifier.padding(top = 10.dp)
+                        )
+                    }
 
-                // 2. System performance diagnostics
-                item(span = { GridItemSpan(gridMode) }) {
-                    PerformanceMetricsWidget(
-                        viewModel = viewModel,
-                        themeState = themeState,
-                        modifier = Modifier.padding(top = 10.dp)
-                    )
-                }
-
-                // 3. Glyphy diagnostic AI Chat companion
-                item(span = { GridItemSpan(gridMode) }) {
-                    GlyphyChatWidget(
-                        viewModel = viewModel,
-                        themeState = themeState,
-                        modifier = Modifier.padding(top = 10.dp, bottom = 20.dp)
-                    )
+                    // 3. Glyphy diagnostic AI Chat companion
+                    item(span = { GridItemSpan(gridMode) }) {
+                        GlyphyChatWidget(
+                            viewModel = viewModel,
+                            themeState = themeState,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1210,6 +1243,17 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
             }
         }
     }
+
+    if (showDebugOverlay) {
+        DebugConsoleOverlay(
+            onDismiss = { showDebugOverlay = false },
+            viewModel = viewModel
+        )
+    } else {
+        MiniErrorConsoleOverlay(
+            modifier = Modifier.align(Alignment.BottomEnd)
+        )
+    }
 }
 }
 }
@@ -1345,6 +1389,41 @@ fun MorphingGlyphIcon(
                     center = center
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun StatBadge(
+    title: String,
+    count: Int,
+    badgeColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = badgeColor.copy(alpha = 0.1f),
+        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.4f)),
+        shape = RoundedCornerShape(8.dp),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = badgeColor.copy(alpha = 0.8f)
+            )
+            Text(
+                text = count.toString(),
+                fontSize = 14.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.ExtraBold,
+                color = badgeColor
+            )
         }
     }
 }
@@ -4821,4 +4900,349 @@ fun SimulatedSoundscapeWorkspace(themeState: ThemeState, contentTint: Color, app
         }
     }
 }
+
+@Composable
+fun DebugConsoleOverlay(
+    onDismiss: () -> Unit,
+    viewModel: com.example.viewmodels.DashboardViewModel
+) {
+    val logs by com.example.utils.DebugLogger.logs.collectAsState()
+    val context = LocalContext.current
+
+    Surface(
+        color = Color(0xFB0A0A0A), // High contrast dark backing overlay
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(18.dp)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
+            // Header Section
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "GLYPH ENGINE TERMINAL",
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Diagnostics & Console telemetry logs",
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                }
+                
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Close overlay",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Stat Counter Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                val errors = logs.count { it.level == "ERROR" }
+                val warnings = logs.count { it.level == "WARN" }
+                val infos = logs.count { it.level == "INFO" }
+
+                StatBadge(title = "ERRORS", count = errors, Color(0xFFFF1744), modifier = Modifier.weight(1f))
+                StatBadge(title = "WARNS", count = warnings, Color(0xFFFFD740), modifier = Modifier.weight(1f))
+                StatBadge(title = "INFOS", count = infos, Color(0xFF00E676), modifier = Modifier.weight(1f))
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Main Log Window Container
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(Color.Black, shape = RoundedCornerShape(12.dp))
+                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)), shape = RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                LazyLogViewer(logs = logs)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Controls/Actions Section
+            Text(
+                text = "DEVELOPMENT UTILITIES",
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = Color.White.copy(alpha = 0.5f),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // ClearLogs
+                Button(
+                    onClick = { com.example.utils.DebugLogger.clear() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.07f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("Clear Logs", fontSize = 10.sp, color = Color.White, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+
+                // Trigger manual sync (tests skeleton loader!)
+                Button(
+                    onClick = { 
+                        viewModel.triggerManualSync()
+                        Toast.makeText(context, "State sync triggered! View diagnostics / quick panel skeletons.", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.07f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("Trigger Sync (Skeletons)", fontSize = 10.sp, color = Color.White, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Test Local Boundary Failure (Local ComponentErrorBoundary!)
+                Button(
+                    onClick = {
+                        viewModel.triggerComponentError(true)
+                        Toast.makeText(context, "Simulated localized grid failure engaged! View the bento grid sector fallback.", Toast.LENGTH_LONG).show()
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x20FFD740)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFFD740).copy(alpha = 0.3f)),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("Trigger Grid Fault (Local)", fontSize = 10.sp, color = Color(0xFFFFE082), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+
+                // Test Exception Engine (tests ErrorBoundary!)
+                Button(
+                    onClick = { 
+                        // Simulate a runtime crash to show the user how our ErrorBoundary wraps everything seamlessly!
+                        com.example.utils.DebugLogger.info("Simulating manual crash via trigger button to test ErrorBoundary integration.")
+                        throw RuntimeException("Manual developer test exception! Intercepted by ErrorBoundary and resolved safely.")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x30FF1744)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFF1744).copy(alpha = 0.3f)),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("Trigger Crash (Shield)", fontSize = 10.sp, color = Color(0xFFFF8A80), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MiniErrorConsoleOverlay(
+    modifier: Modifier = Modifier
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val logs by com.example.utils.DebugLogger.logs.collectAsState()
+    val errorLogs = remember(logs) { logs.filter { it.level == "ERROR" }.takeLast(5) }
+
+    if (errorLogs.isNotEmpty()) {
+        Box(
+            modifier = modifier
+                .padding(16.dp)
+        ) {
+            if (!isExpanded) {
+                // Compact floating diagnostics pill
+                Surface(
+                    onClick = { isExpanded = true },
+                    color = Color(0xEC121212),
+                    border = BorderStroke(1.2.dp, Color(0xFFFF1744)),
+                    shape = RoundedCornerShape(20.dp),
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Flashing alert tick indicator
+                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                        val dotAlpha by infiniteTransition.animateFloat(
+                            initialValue = 0.3f,
+                            targetValue = 1.0f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(600, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "dot_alpha"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(Color(0xFFFF1744).copy(alpha = dotAlpha), androidx.compose.foundation.shape.CircleShape)
+                                .border(1.dp, Color.White.copy(alpha = 0.3f), androidx.compose.foundation.shape.CircleShape)
+                        )
+                        Text(
+                            text = "ERRORS: ${errorLogs.size}",
+                            color = Color(0xFFFF8A80),
+                            fontSize = 8.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            } else {
+                // Expanded terminal dashboard console error card
+                Surface(
+                    color = Color(0xF60A0A0A),
+                    border = BorderStroke(1.5.dp, Color(0xFFFF1744)),
+                    shape = RoundedCornerShape(14.dp),
+                    tonalElevation = 10.dp,
+                    modifier = Modifier
+                        .widthIn(max = 300.dp)
+                        .wrapContentHeight()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape)
+                                )
+                                Text(
+                                    text = "LAST 5 SYSTEM ERRORS",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                            
+                            IconButton(
+                                onClick = { isExpanded = false },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Collapse",
+                                    tint = Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
+                        
+                        HorizontalDivider(
+                            color = Color(0xFFFF1744).copy(alpha = 0.25f),
+                            thickness = 1.dp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                        
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            errorLogs.reversed().forEach { log ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color.Black.copy(alpha = 0.4f), shape = RoundedCornerShape(6.dp))
+                                        .border(BorderStroke(0.8.dp, Color.White.copy(alpha = 0.05f)), shape = RoundedCornerShape(6.dp))
+                                        .padding(8.dp)
+                                ) {
+                                    Text(
+                                        text = "[${log.timestamp}] ERROR",
+                                        color = Color(0xFFFF1744),
+                                        fontSize = 8.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = log.message,
+                                        color = Color(0xFFE0E0E0),
+                                        fontSize = 8.3.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        lineHeight = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Button(
+                                onClick = { com.example.utils.DebugLogger.clear() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.08f)),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(26.dp)
+                            ) {
+                                Text("CLEAR", fontSize = 8.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                            Button(
+                                onClick = { isExpanded = false },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(26.dp)
+                            ) {
+                                Text("COLLAPSE", fontSize = 8.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = Color.Black)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 

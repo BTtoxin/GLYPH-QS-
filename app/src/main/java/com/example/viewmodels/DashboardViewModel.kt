@@ -66,6 +66,17 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isEditMode = MutableStateFlow(false)
     val isEditMode = _isEditMode.asStateFlow()
 
+    // Simulated component failure state
+    private val _componentErrorTriggered = MutableStateFlow(false)
+    val componentErrorTriggered = _componentErrorTriggered.asStateFlow()
+
+    fun triggerComponentError(triggered: Boolean) {
+        _componentErrorTriggered.value = triggered
+        if (triggered) {
+            com.example.utils.DebugLogger.error("Simulated localized Bento Grid composition failure intercepted and handled with Glyph-styled fallback message.")
+        }
+    }
+
     private val _selectedTileIdForSwap = MutableStateFlow<String?>(null)
     val selectedTileIdForSwap = _selectedTileIdForSwap.asStateFlow()
 
@@ -112,6 +123,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _isDeskLockConnected = MutableStateFlow(true)
     val isDeskLockConnected = _isDeskLockConnected.asStateFlow()
+
+    // Sync state for skeleton placeholders
+    private val _isSyncing = MutableStateFlow(true)
+    val isSyncing = _isSyncing.asStateFlow()
 
     // App Volume Isolation states
     private val _isolatedAppVolume = MutableStateFlow(65) // simulated percentage
@@ -462,6 +477,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     init {
+        // Initial simulated state sync delay to demonstrate beautifully animated skeleton placeholders on screen launch
+        viewModelScope.launch {
+            delay(2000)
+            _isSyncing.value = false
+            com.example.utils.DebugLogger.info("Initial engine telemetry & QS state synchronization completed.")
+        }
         refreshPermissionStates()
         loadPreferences()
         initializeDefaultTiles()
@@ -575,6 +596,23 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val rawSavedList = prefs.getString("whitelisted_apps_csv", "Phone,Messages,Settings,Maps,Clock") ?: "Phone,Messages,Settings,Maps,Clock"
         _whitelistedApps.value = rawSavedList.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         loadScenarios()
+    }
+
+    fun triggerManualSync() {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            com.example.utils.DebugLogger.info("Starting diagnostic subsystems and Quick Settings tile state synchronization.")
+            delay(1500)
+            _isSyncing.value = false
+            com.example.utils.DebugLogger.info("Dynamic telemetry sync and panel status verification completed successfully.")
+        }
+    }
+
+    fun triggerResetAllStates() {
+        com.example.utils.DebugLogger.info("Boundary trigger: Performing soft reset of custom layouts and configurations.")
+        prefs.edit().clear().apply()
+        loadPreferences()
+        initializeDefaultTiles()
     }
 
     private fun saveThemePreferences() {

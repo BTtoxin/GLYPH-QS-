@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.example.models.TileType
+import com.example.ui.ErrorBoundary
 import com.example.ui.DashboardScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodels.DashboardViewModel
@@ -49,7 +50,17 @@ class MainActivity : ComponentActivity() {
 
       MyApplicationTheme(themeState = themeState) {
         Surface(modifier = Modifier.fillMaxSize()) {
-          DashboardScreen(viewModel)
+          ErrorBoundary(
+            onResetState = {
+              try {
+                viewModel.triggerResetAllStates()
+              } catch (e: Exception) {
+                e.printStackTrace()
+              }
+            }
+          ) {
+            DashboardScreen(viewModel)
+          }
         }
       }
     }
