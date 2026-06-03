@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    handleIncomingIntent(intent)
     setContent {
       val tiles by viewModel.tiles.collectAsState()
       val themeState by viewModel.themeState.collectAsState()
@@ -51,6 +52,39 @@ class MainActivity : ComponentActivity() {
           DashboardScreen(viewModel)
         }
       }
+    }
+  }
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    handleIncomingIntent(intent)
+  }
+
+  private fun handleIncomingIntent(intent: android.content.Intent?) {
+    if (intent == null) return
+    val blockTriggered = intent.getBooleanExtra("SYSTEM_BLOCK_TRIGGERED", false)
+    if (blockTriggered) {
+      val blockedPkg = intent.getStringExtra("BLOCKED_PACKAGE_NAME") ?: "App"
+      val friendlyName = viewModel.getFriendlyAppName(blockedPkg)
+      
+      // Vibrate to signal restriction violation
+      try {
+        val vibrator = getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        if (vibrator != null) {
+          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            vibrator.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 150, 80, 150), -1))
+          } else {
+            vibrator.vibrate(200)
+          }
+        }
+      } catch (e: Exception) {}
+      
+      android.widget.Toast.makeText(
+        this, 
+        "🚫 Deep Focus Shield: $friendlyName is LOCKED for Zen productivity!", 
+        android.widget.Toast.LENGTH_LONG
+      ).show()
     }
   }
 }

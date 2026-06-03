@@ -7,6 +7,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.app.AppOpsManager
+import android.app.usage.UsageStatsManager
+import android.provider.Settings
+import android.net.Uri
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -249,6 +253,87 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _whitelistedApps = MutableStateFlow(listOf("Phone", "Messages", "Settings", "Maps", "Clock"))
     val whitelistedApps = _whitelistedApps.asStateFlow()
 
+    // Permissions tracking for System-Wide deep focus mode
+    private val _overlayPermissionGranted = MutableStateFlow(false)
+    val overlayPermissionGranted = _overlayPermissionGranted.asStateFlow()
+
+    private val _usageStatsPermissionGranted = MutableStateFlow(false)
+    val usageStatsPermissionGranted = _usageStatsPermissionGranted.asStateFlow()
+
+    private val _dndPermissionGranted = MutableStateFlow(false)
+    val dndPermissionGranted = _dndPermissionGranted.asStateFlow()
+
+    // Block statistics to showcase stability / blocking outcomes
+    private val _blockedAppsCount = MutableStateFlow(0)
+    val blockedAppsCount = _blockedAppsCount.asStateFlow()
+
+    private val _lastBlockedApp = MutableStateFlow<String?>(null)
+    val lastBlockedApp = _lastBlockedApp.asStateFlow()
+
+    // Map application package to a friendly name for blocking alert
+    fun getFriendlyAppName(pkg: String): String {
+        return when {
+            pkg.contains("youtube") -> "YouTube"
+            pkg.contains("instagram") -> "Instagram"
+            pkg.contains("facebook") || pkg.contains("katana") -> "Facebook"
+            pkg.contains("tiktok") || pkg.contains("zhiliaoapp") -> "TikTok"
+            pkg.contains("twitter") || pkg.contains("twitter") -> "X (Twitter)"
+            pkg.contains("messenger") -> "Messenger"
+            pkg.contains("telegram") -> "Telegram"
+            pkg.contains("snapchat") -> "Snapchat"
+            pkg.contains("netflix") -> "Netflix"
+            pkg.contains("reddit") -> "Reddit"
+            pkg.contains("chrome") -> "Google Chrome"
+            pkg.contains("game") || pkg.contains("tencent") || pkg.contains("supercell") || pkg.contains("pubg") || pkg.contains("mojang") -> "Game App"
+            else -> pkg.split(".").lastOrNull()?.replaceFirstChar { it.uppercase() } ?: pkg
+        }
+    }
+
+    fun incrementBlockedAppsCount(pkg: String) {
+        _blockedAppsCount.update { it + 1 }
+        _lastBlockedApp.value = getFriendlyAppName(pkg)
+    }
+
+    fun hasOverlayPermission(): Boolean {
+        val context = getApplication<Application>()
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            android.provider.Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+    }
+
+    fun hasUsageStatsPermission(): Boolean {
+        val context = getApplication<Application>()
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager ?: return false
+        val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            appOps.checkOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                context.packageName
+            )
+        } else {
+            android.app.AppOpsManager.MODE_ALLOWED
+        }
+        return mode == android.app.AppOpsManager.MODE_ALLOWED
+    }
+
+    fun hasDndPermission(): Boolean {
+        val context = getApplication<Application>()
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            nm?.isNotificationPolicyAccessGranted == true
+        } else {
+            true
+        }
+    }
+
+    fun refreshPermissionStates() {
+        _overlayPermissionGranted.value = hasOverlayPermission()
+        _usageStatsPermissionGranted.value = hasUsageStatsPermission()
+        _dndPermissionGranted.value = hasDndPermission()
+    }
+
     fun setFocusMinutes(minutes: Int) {
         val bounded = minutes.coerceIn(1, 240)
         _focusMinutes.value = bounded
@@ -350,6 +435,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     init {
+        refreshPermissionStates()
         loadPreferences()
         initializeDefaultTiles()
         registerBatteryReceiver()

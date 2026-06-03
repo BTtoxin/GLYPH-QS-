@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.content.ClipData
+import android.content.Intent
 import android.content.ClipboardManager
 import android.content.Context
 import android.media.ToneGenerator
@@ -1520,7 +1521,22 @@ fun FocusTimerConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
     val focusMinutes by viewModel.focusMinutes.collectAsState()
     val whitelist by viewModel.whitelistedApps.collectAsState()
 
-    Text("Configure your Deep Focus parameters. When active, Zen Bodyguard shields your phone.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
+    val context = LocalContext.current
+    val overlayGranted by viewModel.overlayPermissionGranted.collectAsState()
+    val usageGranted by viewModel.usageStatsPermissionGranted.collectAsState()
+    val dndGranted by viewModel.dndPermissionGranted.collectAsState()
+    val blockedCount by viewModel.blockedAppsCount.collectAsState()
+    val lastBlocked by viewModel.lastBlockedApp.collectAsState()
+
+    // Poll permission states every 1.5 seconds when configurator is visible
+    LaunchedEffect(Unit) {
+        while (true) {
+            viewModel.refreshPermissionStates()
+            delay(1500)
+        }
+    }
+
+    Text("Configure your Deep Focus parameters. When active, Zen Bodyguard shields your entire device system-wide.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
     Spacer(modifier = Modifier.height(12.dp))
 
     // Interactive Timer Progress
@@ -1533,6 +1549,208 @@ fun FocusTimerConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
     }
 
     Spacer(modifier = Modifier.height(12.dp))
+
+    // Real-time Permission Status and Intent Launcher Clickables
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.White.copy(alpha = 0.03f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+            .padding(10.dp)
+    ) {
+        Text(
+            text = "SYSTEM-WIDE PROTECTION PERMISSIONS",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
+            color = themeState.accentColor.color
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // Overlay permission row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (!overlayGranted) {
+                        try {
+                            val intent = Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:" + context.packageName)
+                            )
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            try {
+                                val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                context.startActivity(intent)
+                            } catch (ex: Exception) {
+                                Toast.makeText(context, "Please grant Overlay Permission in system settings", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } else {
+                        Toast.makeText(context, "Overlay protection is fully active!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("1. System Overlay Display", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Draw lock overlays over restricted apps & addictive games", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (overlayGranted) Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFFFF1744).copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = if (overlayGranted) "GRANTED" else "TAP TO SETUP",
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (overlayGranted) Color(0xFF00C853) else Color(0xFFFF1744)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Usage statistics permission row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (!usageGranted) {
+                        try {
+                            val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Redirecting to Usage Access settings...", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "Device statistics link is active!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("2. App Activity & Usage Access", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Allows detecting foreground game/social launches in 120Hz", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (usageGranted) Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFFFF1744).copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = if (usageGranted) "GRANTED" else "TAP TO SETUP",
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (usageGranted) Color(0xFF00C853) else Color(0xFFFF1744)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Do Not Disturb Access block
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (!dndGranted) {
+                        try {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                val intent = Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                                context.startActivity(intent)
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "DND policy screen was not found", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "Do Not Disturb control is active!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("3. Do Not Disturb Control", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Restores ring silence & mutes all buzzing loops during timer", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (dndGranted) Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFFFF1744).copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = if (dndGranted) "GRANTED" else "TAP TO SETUP",
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (dndGranted) Color(0xFF00C853) else Color(0xFFFF1744)
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Banking guardian active notice - assuring the user of 100% banking isolate security
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF0D532C).copy(alpha = 0.22f))
+            .border(1.dp, Color(0xFF05642E).copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("🛡️", fontSize = 12.sp)
+                Text("BANKING EXCLUSION SAFEGUARD ACTIVE", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace, color = Color(0xFF00E676))
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Financial, investment, and mobile banking applications (e.g. Chase, HSBC, PayPal, wallets) are entirely isolated and bypassed. The background usage analyzer never locks, captures, or interferes with banking processes, keeping your funds safe.",
+                fontSize = 9.sp,
+                color = Color.White.copy(alpha = 0.85f),
+                lineHeight = 11.sp
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Live Intercept Statistics
+    if (blockedCount > 0) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color.White.copy(alpha = 0.05f))
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Ecosystem Intercepts:", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = Color.White)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("$blockedCount Blocked", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color, fontWeight = FontWeight.Bold)
+                if (lastBlocked != null) {
+                    Text("(Last: $lastBlocked)", fontSize = 8.sp, color = Color.White.copy(alpha = 0.5f), fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+    }
 
     if (!isActive) {
         Text("Select Timeout Duration: ${focusMinutes} Min (${String.format("%.1f", focusMinutes / 60.0)} hrs)", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
@@ -3822,6 +4040,19 @@ fun FocalLockoutBodyguardOverlay(
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp
                     )
+
+                    val lastBlockedName by viewModel.lastBlockedApp.collectAsState()
+                    if (lastBlockedName != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "SHIELDED ATTEMPT INTERCEPTED: [ $lastBlockedName ]",
+                            color = Color.Red,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 10.sp,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                 }
 
                 // Permitted Whitelisted apps deck
