@@ -78,13 +78,30 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
     val gesturePadActive by viewModel.gesturePadActive.collectAsState()
 
     var isBooting by remember { mutableStateOf(true) }
+    var bootFinishTriggered by remember { mutableStateOf(false) }
 
-    if (isBooting) {
-        BootScreen(themeState) {
-            isBooting = false
-        }
-        return
-    }
+    val bootAlpha by animateFloatAsState(
+        targetValue = if (bootFinishTriggered) 0f else 1f,
+        animationSpec = tween(450, easing = FastOutSlowInEasing),
+        finishedListener = {
+            if (bootFinishTriggered) {
+                isBooting = false
+            }
+        },
+        label = "boot_fade"
+    )
+
+    val systemContentScale by animateFloatAsState(
+        targetValue = if (bootFinishTriggered) 1.0f else 0.95f,
+        animationSpec = tween(550, easing = FastOutSlowInEasing),
+        label = "system_content_scale"
+    )
+
+    val systemContentAlpha by animateFloatAsState(
+        targetValue = if (bootFinishTriggered) 1.0f else 0f,
+        animationSpec = tween(450, easing = FastOutSlowInEasing),
+        label = "system_content_alpha"
+    )
 
     // Dialog state for detailed bento adjustments
     var activeControlTile by remember { mutableStateOf<DashboardTile?>(null) }
@@ -102,7 +119,16 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = systemContentScale
+                    scaleY = systemContentScale
+                    alpha = systemContentAlpha
+                }
+        ) {
+            Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { 
@@ -553,10 +579,10 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                         cardVisible = true
                     }
                     val cardScale by animateFloatAsState(
-                        targetValue = if (cardVisible) 1.0f else 0.4f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
+                        targetValue = if (cardVisible) 1.0f else 0.9f,
+                        animationSpec = tween(
+                            durationMillis = 220,
+                            easing = FastOutSlowInEasing
                         ),
                         label = "card_scale"
                     )
@@ -1016,6 +1042,20 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
         val timeString = tiles.find { it.type == TileType.FOCUS_TIMER }?.displayValue ?: "25:00"
         FocalLockoutBodyguardOverlay(viewModel, themeState, timeString)
     }
+    }
+
+    if (isBooting) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = bootAlpha }
+                .clickable(enabled = true, onClick = {})
+        ) {
+            BootScreen(themeState) {
+                bootFinishTriggered = true
+            }
+        }
+    }
 }
 }
 
@@ -1058,7 +1098,7 @@ fun MorphingGlyphIcon(
     val transition = updateTransition(targetState = isActive, label = "glyph_morph")
     
     val morphProgress by transition.animateFloat(
-        transitionSpec = { spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow) },
+        transitionSpec = { tween(240, easing = FastOutSlowInEasing) },
         label = "morph"
     ) { active ->
         if (active) 1.0f else 0.0f
@@ -1185,7 +1225,7 @@ fun TileItem(
     
     val containerColor by animateColorAsState(
         targetValue = if (isActive) themeState.accentColor.color else Color.White.copy(alpha = 0.06f),
-        animationSpec = spring()
+        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
     )
     
     val shape = when (themeState.tileShape) {
@@ -1196,7 +1236,7 @@ fun TileItem(
 
     val contentColor by animateColorAsState(
         targetValue = if (isActive) Color.Black else Color.White,
-        animationSpec = spring()
+        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
     )
 
     val editBorder = if (isSelectedInEdit) {

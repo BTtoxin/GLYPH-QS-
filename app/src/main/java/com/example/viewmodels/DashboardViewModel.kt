@@ -573,6 +573,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 if (tile.id == tileId) {
                     val newState = !tile.isActive
                     playTickTone(ToneGenerator.TONE_PROP_BEEP)
+                    playHapticVibration("TICK")
                     when (tile.type) {
                         TileType.FOCUS_TIMER -> {
                             handleFocusTimer(newState, tile)
@@ -680,6 +681,34 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         TileType.MORSE_FLASHER -> {
                             triggerMorseFlasher()
                             tile.copy(isActive = true)
+                        }
+                        TileType.WIFI -> {
+                            try {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                    val intent = android.content.Intent(android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    application.startActivity(intent)
+                                } else {
+                                    val intent = android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+                                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    application.startActivity(intent)
+                                }
+                                Toast.makeText(application, "Opening System Wi-Fi panel", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            tile.copy(isActive = newState)
+                        }
+                        TileType.BLUETOOTH -> {
+                            try {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)
+                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                application.startActivity(intent)
+                                Toast.makeText(application, "Opening System Bluetooth settings", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            tile.copy(isActive = newState)
                         }
                         else -> tile.copy(isActive = newState)
                     }
