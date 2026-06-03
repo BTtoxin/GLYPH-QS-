@@ -45,8 +45,16 @@ enum class TileType(val displayName: String, val icon: ImageVector, val defaultS
     CPU_TEMP("CPU Thermal", Icons.Filled.Thermostat, TileSize.SMALL),
     PASSWORD_GEN("Keys Forge", Icons.Filled.Key, TileSize.MEDIUM_WIDE),
     WORLD_CLOCK("World Clocks", Icons.Filled.Public, TileSize.MEDIUM_WIDE),
-    QUICK_NOTES("Memo Pad", Icons.Filled.Notes, TileSize.LARGE_SQUARE)
+    QUICK_NOTES("Memo Pad", Icons.Filled.Notes, TileSize.LARGE_SQUARE),
+    MACRO_EDITOR("Scenario Play", Icons.Filled.PlayCircleOutline, TileSize.LARGE_SQUARE)
 }
+
+data class Scenario(
+    val id: String,
+    val name: String,
+    val targetTypes: List<TileType>,
+    val hapticPattern: String // "TICK", "RUMBLE", "DOUBLE_TAP", "SWEEP"
+)
 
 data class DashboardTile(
     val id: String,

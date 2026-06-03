@@ -14,6 +14,9 @@ import android.os.BatteryManager
 import android.os.Environment
 import android.os.StatFs
 import android.widget.Toast
+import android.os.Vibrator
+import android.os.VibrationEffect
+import com.example.models.Scenario
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.models.DashboardTile
@@ -107,6 +110,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     // App Volume Isolation states
     private val _isolatedAppVolume = MutableStateFlow(65) // simulated percentage
     val isolatedAppVolume = _isolatedAppVolume.asStateFlow()
+
+    // Macro Scenarios flow
+    private val _scenarios = MutableStateFlow<List<Scenario>>(emptyList())
+    val scenarios = _scenarios.asStateFlow()
+
+    // Simulated screenshot state
+    private val _isScreenshotTriggered = MutableStateFlow(false)
+    val isScreenshotTriggered = _isScreenshotTriggered.asStateFlow()
+
+    // Global gesture pad overlay active state
+    private val _gesturePadActive = MutableStateFlow(false)
+    val gesturePadActive = _gesturePadActive.asStateFlow()
 
     // ==========================================
     // MASSIVE EXPANSION PROPERTIES (15+ NEW FEATURES)
@@ -277,6 +292,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             statsMap[type] = count
         }
         _useCount.value = statsMap
+        loadScenarios()
     }
 
     private fun saveThemePreferences() {
@@ -325,7 +341,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             DashboardTile("cpu_temp", TileType.CPU_TEMP, TileType.CPU_TEMP.defaultSize, displayValue = "41°C"),
             DashboardTile("password_gen", TileType.PASSWORD_GEN, TileType.PASSWORD_GEN.defaultSize, displayValue = "Keys Active"),
             DashboardTile("world_clock", TileType.WORLD_CLOCK, TileType.WORLD_CLOCK.defaultSize, displayValue = "Global"),
-            DashboardTile("quick_notes", TileType.QUICK_NOTES, TileType.QUICK_NOTES.defaultSize, displayValue = "Memo Active")
+            DashboardTile("quick_notes", TileType.QUICK_NOTES, TileType.QUICK_NOTES.defaultSize, displayValue = "Memo Active"),
+            DashboardTile("macro_editor", TileType.MACRO_EDITOR, TileType.MACRO_EDITOR.defaultSize, displayValue = "Scenarios Active")
         )
 
         // Read or write default ordering
@@ -1091,6 +1108,171 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     // K. Quick memo notes sandbox saver
     fun updateQuickNotes(content: String) {
         _notesSandbox.value = content
+    }
+
+    // ==========================================
+    // L. MICRO LABS DESIGN FEATURES (MACROS, GESTURES, SCENARIOS)
+    // ==========================================
+
+    private fun loadScenarios() {
+        val serialized = prefs.getString("custom_scenarios", null)
+        val list = mutableListOf<Scenario>()
+        if (serialized == null) {
+            // Baseline presets
+            list.add(Scenario("preset_1", "Late Cinema Mode", listOf(TileType.THEATER, TileType.CAFFEINE, TileType.SCREEN_TIMEOUT), "DOUBLE_TAP"))
+            list.add(Scenario("preset_2", "Extreme Game Boost", listOf(TileType.RAM_BOOSTER, TileType.WIFI, TileType.GLYPH), "RUMBLE"))
+            list.add(Scenario("preset_3", "Zen Deep Study", listOf(TileType.FOCUS_TIMER, TileType.METRONOME), "SWEEP"))
+            saveScenariosList(list)
+        } else {
+            try {
+                val parts = serialized.split(";")
+                for (part in parts) {
+                    if (part.isBlank()) continue
+                    val sub = part.split("|")
+                    if (sub.size >= 4) {
+                        val id = sub[0]
+                        val name = sub[1]
+                        val typesStr = sub[2]
+                        val haptic = sub[3]
+                        val types = if (typesStr.isBlank()) emptyList() else typesStr.split(",").mapNotNull {
+                            try { TileType.valueOf(it) } catch (e: Exception) { null }
+                        }
+                        list.add(Scenario(id, name, types, haptic))
+                    }
+                }
+            } catch (e: Exception) {
+                list.add(Scenario("preset_1", "Late Cinema Mode", listOf(TileType.THEATER, TileType.CAFFEINE, TileType.SCREEN_TIMEOUT), "DOUBLE_TAP"))
+            }
+        }
+        _scenarios.value = list
+    }
+
+    private fun saveScenariosList(list: List<Scenario>) {
+        val sb = StringBuilder()
+        for (sc in list) {
+            val typesStr = sc.targetTypes.joinToString(",") { it.name }
+            sb.append("${sc.id}|${sc.name}|$typesStr|${sc.hapticPattern};")
+        }
+        prefs.edit().putString("custom_scenarios", sb.toString()).apply()
+    }
+
+    fun addScenario(name: String, targetTypes: List<TileType>, hapticPattern: String) {
+        val newSc = Scenario("sc_" + UUID.randomUUID().toString().take(6), name, targetTypes, hapticPattern)
+        val current = _scenarios.value.toMutableList()
+        current.add(newSc)
+        _scenarios.value = current
+        saveScenariosList(current)
+        Toast.makeText(getApplication(), "Scenario '$name' Created!", Toast.LENGTH_SHORT).show()
+        playHapticVibration("TICK")
+    }
+
+    fun deleteScenario(id: String) {
+        val current = _scenarios.value.filter { it.id != id }
+        _scenarios.value = current
+        saveScenariosList(current)
+        Toast.makeText(getApplication(), "Scenario Deleted", Toast.LENGTH_SHORT).show()
+        playHapticVibration("TICK")
+    }
+
+    fun playHapticVibration(pattern: String) {
+        val context = getApplication<Application>()
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        if (vibrator != null && vibrator.hasVibrator()) {
+            try {
+                when (pattern) {
+                    "TICK" -> vibrator.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
+                    "RUMBLE" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 100, 50, 100, 50, 100), -1))
+                    "DOUBLE_TAP" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 80, 80), -1))
+                    "SWEEP" -> vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 50, 50, 80, 50, 120), -1))
+                }
+            } catch (e: Exception) {
+                vibrator.vibrate(100)
+            }
+        }
+        // Play synthesizer audio feedback synchronized
+        when (pattern) {
+            "TICK" -> playTickTone(ToneGenerator.TONE_PROP_BEEP)
+            "RUMBLE" -> {
+                viewModelScope.launch {
+                    playTickTone(ToneGenerator.TONE_DTMF_D)
+                    delay(100)
+                    playTickTone(ToneGenerator.TONE_DTMF_0)
+                }
+            }
+            "DOUBLE_TAP" -> {
+                viewModelScope.launch {
+                    playTickTone(ToneGenerator.TONE_PROP_BEEP2)
+                    delay(120)
+                    playTickTone(ToneGenerator.TONE_PROP_BEEP2)
+                }
+            }
+            "SWEEP" -> {
+                viewModelScope.launch {
+                    playTickTone(ToneGenerator.TONE_PROP_BEEP)
+                    delay(100)
+                    playTickTone(ToneGenerator.TONE_PROP_BEEP2)
+                    delay(100)
+                    playTickTone(ToneGenerator.TONE_DTMF_9)
+                }
+            }
+        }
+    }
+
+    fun runScenario(scenario: Scenario) {
+        playHapticVibration(scenario.hapticPattern)
+        val application = getApplication<Application>()
+        viewModelScope.launch {
+            Toast.makeText(application, "Starting: ${scenario.name}", Toast.LENGTH_SHORT).show()
+            for (type in scenario.targetTypes) {
+                val tile = _tiles.value.find { it.type == type }
+                if (tile != null) {
+                    triggerTileAction(tile.id)
+                    delay(300)
+                }
+            }
+            Toast.makeText(application, "${scenario.name} Fully Deployed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun toggleGesturePad() {
+        _gesturePadActive.value = !_gesturePadActive.value
+        playHapticVibration("TICK")
+        if (_gesturePadActive.value) {
+            Toast.makeText(getApplication(), "Gesture Overlay active. Draw O / I or 2-finger tap background!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun triggerGestureAction(gestureName: String) {
+        val application = getApplication<Application>()
+        when (gestureName) {
+            "Circle O" -> {
+                val flashTile = _tiles.value.find { it.type == TileType.FLASHLIGHT }
+                if (flashTile != null) {
+                    triggerTileAction(flashTile.id)
+                } else {
+                    toggleFlashlight(application, true)
+                }
+                playHapticVibration("DOUBLE_TAP")
+                Toast.makeText(application, "Circle 'O' Drawn: Flashlight triggered!", Toast.LENGTH_SHORT).show()
+            }
+            "Line I" -> {
+                purgeMemoryBoooster()
+                Toast.makeText(application, "Line 'I' Drawn: Memory purged!", Toast.LENGTH_SHORT).show()
+            }
+            "Screenshot" -> {
+                _isScreenshotTriggered.value = true
+                playHapticVibration("SWEEP")
+                viewModelScope.launch {
+                    delay(600)
+                    _isScreenshotTriggered.value = false
+                }
+                Toast.makeText(application, "System Screen Mapping Saved to Gallery", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun resetScreenshot() {
+        _isScreenshotTriggered.value = false
     }
 
     override fun onCleared() {

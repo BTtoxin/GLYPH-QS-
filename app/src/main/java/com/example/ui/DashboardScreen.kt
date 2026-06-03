@@ -29,6 +29,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
@@ -54,12 +56,25 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
+    val context = LocalContext.current
+    var edgeDragOffset by remember { mutableStateOf(0f) }
+    var isEdgeDragging by remember { mutableStateOf(false) }
+    var activeEdge by remember { mutableStateOf("none") }
+    var lastTickSegment by remember { mutableStateOf(0) }
+    val drawnPoints = remember { mutableStateListOf<Offset>() }
+    var showMacroDialog by remember { mutableStateOf(false) }
+
     val tiles by viewModel.tiles.collectAsState()
     val gridMode by viewModel.gridMode.collectAsState()
     val themeState by viewModel.themeState.collectAsState()
     val isEditMode by viewModel.isEditMode.collectAsState()
     val selectedSwapId by viewModel.selectedTileIdForSwap.collectAsState()
     val customNames by viewModel.customNames.collectAsState()
+
+    // Scenarios and Lab Gestures states
+    val scenarios by viewModel.scenarios.collectAsState()
+    val isScreenshotTriggered by viewModel.isScreenshotTriggered.collectAsState()
+    val gesturePadActive by viewModel.gesturePadActive.collectAsState()
 
     var isBooting by remember { mutableStateOf(true) }
 
@@ -85,7 +100,8 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
         )
     }
 
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { 
@@ -205,6 +221,77 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                     Text(if (isEditMode) "Done" else "Edit Layout", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
+
+            // LAB HUD CONTROL BAR
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Gestures Toggle Button
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (gesturePadActive) themeState.accentColor.color else Color.White.copy(alpha = 0.08f))
+                        .clickable { viewModel.toggleGesturePad() }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (gesturePadActive) Color.Black else themeState.accentColor.color)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "LAB GESTURES: ${if (gesturePadActive) "ON" else "OFF"}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = if (gesturePadActive) Color.Black else Color.White
+                        )
+                    }
+                }
+
+                // Macro dialog toggle button
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .clickable { showMacroDialog = true }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayCircleOutline,
+                            contentDescription = "play_macro",
+                            tint = themeState.accentColor.color,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "SCENARIO MACROS",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Edit Mode Active Banner
             if (isEditMode) {
@@ -424,36 +511,61 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(
+                itemsIndexed(
                     items = tiles,
-                    key = { it.id },
-                    span = { tile ->
+                    key = { _, item -> item.id },
+                    span = { _, tile ->
                         val boundedSpan = minOf(tile.size.span, gridMode)
                         GridItemSpan(boundedSpan)
                     }
-                ) { tile ->
+                ) { index, tile ->
                     val isSelectedInEdit = selectedSwapId == tile.id
                     val customLabel = customNames[tile.id] ?: tile.type.displayName
 
-                    TileItem(
-                        tile = tile,
-                        customLabel = customLabel,
-                        isDeepFocusActive = isDeepFocusActive,
-                        themeState = themeState,
-                        isSelectedInEdit = isSelectedInEdit,
-                        onClick = {
-                            if (isEditMode) {
-                                viewModel.handleTileClickInEditMode(tile.id)
-                            } else {
-                                // Decide if simple switch or open dial details dialog
-                                if (tile.type.hasDetailedControl()) {
-                                    activeControlTile = tile
+                    var cardVisible by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        delay(20L + index * 25L)
+                        cardVisible = true
+                    }
+                    val cardScale by animateFloatAsState(
+                        targetValue = if (cardVisible) 1.0f else 0.4f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "card_scale"
+                    )
+                    val cardAlpha by animateFloatAsState(
+                        targetValue = if (cardVisible) 1.0f else 0.0f,
+                        animationSpec = tween(260, easing = LinearOutSlowInEasing),
+                        label = "card_alpha"
+                    )
+
+                    Box(modifier = Modifier.graphicsLayer {
+                        scaleX = cardScale
+                        scaleY = cardScale
+                        alpha = cardAlpha
+                    }) {
+                        TileItem(
+                            tile = tile,
+                            customLabel = customLabel,
+                            isDeepFocusActive = isDeepFocusActive,
+                            themeState = themeState,
+                            isSelectedInEdit = isSelectedInEdit,
+                            onClick = {
+                                if (isEditMode) {
+                                    viewModel.handleTileClickInEditMode(tile.id)
                                 } else {
-                                    viewModel.triggerTileAction(tile.id)
+                                    // Decide if simple switch or open dial details dialog
+                                    if (tile.type.hasDetailedControl()) {
+                                        activeControlTile = tile
+                                    } else {
+                                        viewModel.triggerTileAction(tile.id)
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -561,6 +673,9 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                         TileType.QUICK_NOTES -> {
                             QuickNotesConfigurator(viewModel, themeState)
                         }
+                        TileType.MACRO_EDITOR -> {
+                            MacroEditorConfigurator(viewModel, themeState)
+                        }
                         else -> {
                             Text("No advanced config properties for this Bento component.", fontSize = 12.sp, color = Color.White)
                         }
@@ -574,6 +689,304 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
             modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
         )
     }
+
+    // 1. GESTURE BLACKBOARD OVERLAY
+    if (gesturePadActive) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.75f))
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            drawnPoints.clear()
+                            drawnPoints.add(offset)
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            drawnPoints.add(change.position)
+                        },
+                        onDragEnd = {
+                            if (drawnPoints.size > 8) {
+                                val first = drawnPoints.first()
+                                val last = drawnPoints.last()
+                                val xs = drawnPoints.map { it.x }
+                                val ys = drawnPoints.map { it.y }
+                                val minX = xs.min()
+                                val maxX = xs.max()
+                                val minY = ys.min()
+                                val maxY = ys.max()
+                                val wWidth = maxX - minX
+                                val hHeight = maxY - minY
+                                val closedDist = Math.hypot((last.x - first.x).toDouble(), (last.y - first.y).toDouble())
+
+                                if (closedDist < 90f && wWidth > 90f && hHeight > 90f) {
+                                    viewModel.triggerGestureAction("Circle O")
+                                } else if (wWidth < 70f && hHeight > 150f) {
+                                    viewModel.triggerGestureAction("Line I")
+                                }
+                            }
+                            drawnPoints.clear()
+                        }
+                    )
+                }
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val cellSize = 30.dp.toPx()
+                for (x in 0..(size.width / cellSize).toInt()) {
+                    for (y in 0..(size.height / cellSize).toInt()) {
+                        drawCircle(
+                            color = themeState.accentColor.color.copy(alpha = 0.08f),
+                            radius = 1.dp.toPx(),
+                            center = Offset(x * cellSize, y * cellSize)
+                        )
+                    }
+                }
+
+                if (drawnPoints.size > 1) {
+                    for (i in 0 until drawnPoints.size - 1) {
+                        val alphaNorm = i.toFloat() / drawnPoints.size
+                        drawLine(
+                            color = themeState.accentColor.color.copy(alpha = alphaNorm),
+                            start = drawnPoints[i],
+                            end = drawnPoints[i + 1],
+                            strokeWidth = 5.dp.toPx(),
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+                        drawCircle(
+                            color = Color.White.copy(alpha = alphaNorm),
+                            radius = 2.dp.toPx(),
+                            center = drawnPoints[i]
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 60.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "DOT-MATRIX CHALKBOARD",
+                    fontWeight = FontWeight.Black,
+                    color = themeState.accentColor.color,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Draw Circle 'O' for Torch • Vertical line down 'I' for memory dump • Two-finger touch for capture screen",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = { viewModel.toggleGesturePad() },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.12f))
+                ) {
+                    Text("EXIT GESTURES", color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+    }
+
+    // 2. DETECTOR OVERLAYS FOR PREDICTIVE BACK BEZEL SWIPES
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(24.dp)
+            .align(Alignment.CenterStart)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        isEdgeDragging = true
+                        activeEdge = "left"
+                        edgeDragOffset = 0f
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        edgeDragOffset += dragAmount.x
+                        val currentSegment = (edgeDragOffset / 40f).toInt()
+                        if (currentSegment != lastTickSegment) {
+                            viewModel.playHapticVibration("TICK")
+                            lastTickSegment = currentSegment
+                        }
+                    },
+                    onDragEnd = {
+                        if (edgeDragOffset > 180f) {
+                            viewModel.playHapticVibration("DOUBLE_TAP")
+                            if (activeControlTile != null) {
+                                activeControlTile = null
+                            } else if (isEditMode) {
+                                viewModel.toggleEditMode()
+                            } else if (showMacroDialog) {
+                                showMacroDialog = false
+                            } else if (gesturePadActive) {
+                                viewModel.toggleGesturePad()
+                            }
+                            Toast.makeText(context, "Predictive Back Triggered", Toast.LENGTH_SHORT).show()
+                        }
+                        isEdgeDragging = false
+                        edgeDragOffset = 0f
+                    }
+                )
+            }
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(24.dp)
+            .align(Alignment.CenterEnd)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        isEdgeDragging = true
+                        activeEdge = "right"
+                        edgeDragOffset = 0f
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        edgeDragOffset -= dragAmount.x
+                        val currentSegment = (edgeDragOffset / 40f).toInt()
+                        if (currentSegment != lastTickSegment) {
+                            viewModel.playHapticVibration("TICK")
+                            lastTickSegment = currentSegment
+                        }
+                    },
+                    onDragEnd = {
+                        if (edgeDragOffset > 180f) {
+                            viewModel.playHapticVibration("DOUBLE_TAP")
+                            if (activeControlTile != null) {
+                                activeControlTile = null
+                            } else if (isEditMode) {
+                                viewModel.toggleEditMode()
+                            } else if (showMacroDialog) {
+                                showMacroDialog = false
+                            } else if (gesturePadActive) {
+                                viewModel.toggleGesturePad()
+                            }
+                            Toast.makeText(context, "Predictive Back Triggered", Toast.LENGTH_SHORT).show()
+                        }
+                        isEdgeDragging = false
+                        edgeDragOffset = 0f
+                    }
+                )
+            }
+    )
+
+    // Render Edge Drag Gauge UI
+    if (isEdgeDragging && edgeDragOffset > 10f) {
+        val progressNorm = (edgeDragOffset / 200f).coerceIn(0f, 1f)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.3f * progressNorm))
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val drawLeft = activeEdge == "left"
+                val arcX = if (drawLeft) 0f else size.width
+                val arcY = size.height / 2
+                val maxArcRadius = 140.dp.toPx()
+                val curRadius = maxArcRadius * progressNorm
+
+                drawCircle(
+                    color = themeState.accentColor.color.copy(alpha = 0.5f * progressNorm),
+                    radius = curRadius,
+                    center = Offset(arcX, arcY),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 3.dp.toPx(),
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                            floatArrayOf(8f, 10f), 0f
+                        )
+                    )
+                )
+
+                drawCircle(
+                    color = themeState.accentColor.color.copy(alpha = 0.2f * progressNorm),
+                    radius = curRadius + 40f,
+                    center = Offset(arcX, arcY),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 2.dp.toPx(),
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                            floatArrayOf(6f, 14f), 0f
+                        )
+                    )
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(if (activeEdge == "left") Alignment.CenterStart else Alignment.CenterEnd)
+                    .padding(horizontal = 40.dp),
+                horizontalAlignment = if (activeEdge == "left") Alignment.Start else Alignment.End
+            ) {
+                Text(
+                    text = "SWIPE TENSION",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = themeState.accentColor.color
+                )
+                Text(
+                    text = "DISMISS FORCE: ${(progressNorm * 100).toInt()}%",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = progressNorm,
+                    modifier = Modifier.width(100.dp).height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    color = themeState.accentColor.color,
+                    trackColor = Color.White.copy(alpha = 0.1f)
+                )
+            }
+        }
+    }
+
+    // 3. SHUTTER SCREENSHOT CAPTURE FLASH
+    if (isScreenshotTriggered) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White)
+        )
+    }
+
+    // 4. INDEPENDENT MACRO EDITOR SCENARIO DIALOG
+    if (showMacroDialog) {
+        AlertDialog(
+            onDismissRequest = { showMacroDialog = false },
+            confirmButton = {
+                TextButton(onClick = { showMacroDialog = false }) {
+                    Text("CLOSE LAB", color = themeState.accentColor.color, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.SettingsInputComponent, contentDescription = null, tint = themeState.accentColor.color, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("SCENARIOS LAB", fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
+                }
+            },
+            text = {
+                MacroEditorConfigurator(viewModel, themeState)
+            },
+            containerColor = Color(0xFF141414),
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
+        )
+    }
+}
 }
 
 // Check if a tile type should open a custom dialog instead of standard trigger toggling
@@ -601,7 +1014,114 @@ fun TileType.hasDetailedControl(): Boolean {
            this == TileType.CPU_TEMP ||
            this == TileType.PASSWORD_GEN ||
            this == TileType.WORLD_CLOCK ||
-           this == TileType.QUICK_NOTES
+           this == TileType.QUICK_NOTES ||
+           this == TileType.MACRO_EDITOR
+}
+
+@Composable
+fun MorphingGlyphIcon(
+    tileType: TileType,
+    isActive: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    val transition = updateTransition(targetState = isActive, label = "glyph_morph")
+    
+    val morphProgress by transition.animateFloat(
+        transitionSpec = { spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow) },
+        label = "morph"
+    ) { active ->
+        if (active) 1.0f else 0.0f
+    }
+    
+    val pulseScale by rememberInfiniteTransition(label = "pulse_scale").animateFloat(
+        initialValue = 1.0f,
+        targetValue = if (isActive) 1.14f else 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
+    Canvas(modifier = modifier.graphicsLayer {
+        scaleX = if (isActive) pulseScale else 1.0f
+        scaleY = if (isActive) pulseScale else 1.0f
+    }) {
+        val sizePx = size.width
+        val center = Offset(sizePx / 2, sizePx / 2)
+        val strokeWidth = 2.dp.toPx()
+
+        when (tileType) {
+            TileType.THEATER, TileType.FOCUS_TIMER, TileType.CAFFEINE -> {
+                val radius = (sizePx / 2) * (0.4f + 0.3f * morphProgress)
+                drawCircle(
+                    color = tint,
+                    radius = radius,
+                    center = center,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+                )
+                if (morphProgress < 0.9f) {
+                    val angle = 45f * (1f - morphProgress)
+                    rotate(angle, center) {
+                        drawLine(
+                            color = tint,
+                            start = Offset(center.x - radius, center.y),
+                            end = Offset(center.x + radius, center.y),
+                            strokeWidth = strokeWidth
+                        )
+                    }
+                }
+            }
+            TileType.WIFI, TileType.BLUETOOTH, TileType.WIFI_SHARE -> {
+                val lobes = 3
+                for (i in 1..lobes) {
+                    val currentRadius = (sizePx / (lobes * 2)) * i * (0.6f + 0.4f * morphProgress)
+                    drawCircle(
+                        color = tint.copy(alpha = if (isActive) 1f - (i * 0.2f) else 0.4f),
+                        radius = currentRadius,
+                        center = center,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = strokeWidth,
+                            pathEffect = if (!isActive) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f) else null
+                        )
+                    )
+                }
+            }
+            else -> {
+                if (isActive) {
+                    val padding = 2.dp.toPx()
+                    val len = 4.dp.toPx()
+                    // top left
+                    drawLine(tint, Offset(padding, padding), Offset(padding + len, padding), strokeWidth)
+                    drawLine(tint, Offset(padding, padding), Offset(padding, padding + len), strokeWidth)
+                    // top right
+                    drawLine(tint, Offset(sizePx - padding, padding), Offset(sizePx - padding - len, padding), strokeWidth)
+                    drawLine(tint, Offset(sizePx - padding, padding), Offset(sizePx - padding, padding + len), strokeWidth)
+                    // bottom left
+                    drawLine(tint, Offset(padding, sizePx - padding), Offset(padding + len, sizePx - padding), strokeWidth)
+                    drawLine(tint, Offset(padding, sizePx - padding), Offset(padding, sizePx - padding - len), strokeWidth)
+                    // bottom right
+                    drawLine(tint, Offset(sizePx - padding, sizePx - padding), Offset(sizePx - padding - len, sizePx - padding), strokeWidth)
+                    drawLine(tint, Offset(sizePx - padding, sizePx - padding), Offset(sizePx - padding, sizePx - padding - len), strokeWidth)
+
+                    drawCircle(tint, 1.51f.dp.toPx(), Offset(center.x - 6.dp.toPx(), center.y - 6.dp.toPx()))
+                    drawCircle(tint, 1.51f.dp.toPx(), Offset(center.x + 6.dp.toPx(), center.y + 6.dp.toPx()))
+                }
+                
+                drawCircle(
+                    color = tint.copy(alpha = if (isActive) 0.15f else 0.05f),
+                    radius = sizePx / 2.3f,
+                    center = center
+                )
+                drawCircle(
+                    color = tint,
+                    radius = 2.dp.toPx(),
+                    center = center
+                )
+            }
+        }
+    }
 }
 
 fun TileSize.displayName(): String {
@@ -689,9 +1209,9 @@ fun DefaultTileContent(tile: DashboardTile, label: String, tint: Color) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                imageVector = tile.type.icon,
-                contentDescription = label,
+            MorphingGlyphIcon(
+                tileType = tile.type,
+                isActive = tile.isActive,
                 tint = tint,
                 modifier = Modifier.size(if (tile.size == TileSize.SMALL) 28.dp else 22.dp)
             )
@@ -729,7 +1249,7 @@ fun LargeStatContent(tile: DashboardTile, label: String, tint: Color) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(tile.type.icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+            MorphingGlyphIcon(tile.type, tile.isActive, tint, Modifier.size(20.dp))
             Text(label, color = tint, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         }
         Text(
@@ -2126,6 +2646,277 @@ fun BootScreen(themeState: ThemeState, onBootFinished: () -> Unit) {
             Spacer(modifier = Modifier.height(20.dp))
             TextButton(onClick = onBootFinished) {
                 Text("SKIP MATRIX BOOT", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
+}
+
+@Composable
+fun MacroEditorConfigurator(viewModel: DashboardViewModel, themeState: com.example.models.ThemeState) {
+    var newMacroName by remember { mutableStateOf("") }
+    val selectedTargets = remember { mutableStateListOf<TileType>() }
+    var selectedHaptic by remember { mutableStateOf("TICK") }
+    val scenarios by viewModel.scenarios.collectAsState()
+
+    val chainableTargets = listOf(
+        TileType.THEATER,
+        TileType.CAFFEINE,
+        TileType.WIFI,
+        TileType.BLUETOOTH,
+        TileType.GLYPH,
+        TileType.RAM_BOOSTER,
+        TileType.SPEED_TEST,
+        TileType.FOCUS_TIMER,
+        TileType.SCREEN_TIMEOUT
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Subsection 1: Create Custom Scenario
+        Surface(
+            color = Color.White.copy(alpha = 0.05f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
+            ) {
+                Text(
+                    "FORGE NEW WORKFLOW SCENARIO",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = themeState.accentColor.color,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // Name Input
+                OutlinedTextField(
+                    value = newMacroName,
+                    onValueChange = { newMacroName = it },
+                    label = { Text("Scenario Name (e.g. Cinema Focus)") },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = themeState.accentColor.color,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                        focusedLabelColor = themeState.accentColor.color,
+                        unfocusedLabelColor = Color.White.copy(alpha = 0.4f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Selectable chain targets list
+                Text(
+                    "CONCURRENT ACTIONS SEQUENCE:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.White.copy(alpha = 0.6f)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    chainableTargets.forEach { type ->
+                        val isSelected = selectedTargets.contains(type)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    if (isSelected) selectedTargets.remove(type)
+                                    else selectedTargets.add(type)
+                                    viewModel.playHapticVibration("TICK")
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { checked ->
+                                    if (checked == true) selectedTargets.add(type)
+                                    else selectedTargets.remove(type)
+                                    viewModel.playHapticVibration("TICK")
+                                },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = themeState.accentColor.color,
+                                    uncheckedColor = Color.White.copy(alpha = 0.3f),
+                                    checkmarkColor = Color.Black
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(type.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = type.displayName,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Vibration Haptic selector
+                Text(
+                    "VIBE ACCENT PATTERN:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.White.copy(alpha = 0.6f)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    listOf("TICK", "RUMBLE", "DOUBLE_TAP", "SWEEP").forEach { pat ->
+                        val sel = selectedHaptic == pat
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (sel) themeState.accentColor.color else Color.White.copy(alpha = 0.08f))
+                                .clickable {
+                                    selectedHaptic = pat
+                                    viewModel.playHapticVibration(pat)
+                                }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                pat.replace("_", " "),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (sel) Color.Black else Color.White
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Forge Button
+                Button(
+                    onClick = {
+                        if (newMacroName.isBlank()) {
+                            viewModel.playHapticVibration("TICK")
+                            return@Button
+                        }
+                        viewModel.addScenario(newMacroName, selectedTargets.toList(), selectedHaptic)
+                        newMacroName = ""
+                        selectedTargets.clear()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = themeState.accentColor.color),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("FORGE CHASSIS SCENARIO", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+
+        // Subsection 2: Deployed Scenarios list
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "ACTIVE SCENARIOS DEPLOYMENT GATEWAY",
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = Color.White.copy(alpha = 0.6f)
+            )
+
+            if (scenarios.isEmpty()) {
+                Text(
+                    "No custom scenario saved.",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.White.copy(alpha = 0.4f)
+                )
+            } else {
+                scenarios.forEach { sc ->
+                    Surface(
+                        color = Color.White.copy(alpha = 0.04f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = sc.name.uppercase(),
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "Vibe Code: ${sc.hapticPattern}",
+                                        fontSize = 9.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = Color.White.copy(alpha = 0.5f)
+                                    )
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    // Run Launcher
+                                    Button(
+                                        onClick = { viewModel.runScenario(sc) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = themeState.accentColor.color),
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Text("DEPLOY", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+                                    }
+
+                                    // Delete
+                                    IconButton(
+                                        onClick = { viewModel.deleteScenario(sc.id) },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Delete, contentDescription = "delete", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            // Draw targets flow visual string
+                            val flowStr = sc.targetTypes.joinToString(" ➔ ") { it.displayName }
+                            Text(
+                                text = "Flow: $flowStr",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = themeState.accentColor.color.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
