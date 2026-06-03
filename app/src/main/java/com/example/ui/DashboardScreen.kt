@@ -44,6 +44,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.models.ThemeState
+import com.example.models.ThemeMode
 import com.example.models.AccentColorType
 import com.example.models.BackgroundStyle
 import com.example.models.TileShape
@@ -53,6 +54,11 @@ import com.example.models.TileType
 import com.example.viewmodels.DashboardViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import android.annotation.SuppressLint
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +77,7 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
     val isEditMode by viewModel.isEditMode.collectAsState()
     val selectedSwapId by viewModel.selectedTileIdForSwap.collectAsState()
     val customNames by viewModel.customNames.collectAsState()
+    val batteryPct by viewModel.batteryLevel.collectAsState()
 
     // Scenarios and Lab Gestures states
     val scenarios by viewModel.scenarios.collectAsState()
@@ -533,23 +540,71 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                         Text("Active System Theme Mode", fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color.White)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(true, false).forEach { isDark ->
-                                val sel = themeState.isDarkMode == isDark
+                            ThemeMode.values().forEach { mode ->
+                                val sel = themeState.themeMode == mode
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(if (sel) themeState.accentColor.color else Color.White.copy(alpha = 0.08f))
-                                        .clickable { viewModel.updateThemeState(themeState.copy(isDarkMode = isDark)) }
+                                        .clickable { 
+                                            viewModel.updateThemeState(
+                                                themeState.copy(
+                                                    themeMode = mode,
+                                                    isDarkMode = when (mode) {
+                                                        ThemeMode.LIGHT -> false
+                                                        ThemeMode.DARK -> true
+                                                        ThemeMode.SYSTEM -> themeState.isDarkMode
+                                                    }
+                                                )
+                                            ) 
+                                        }
                                         .padding(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
                                     Text(
-                                        if (isDark) "Nothing Dark" else "Nothing Light",
+                                        mode.displayName,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (sel) Color.Black else Color.White
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            if (batteryPct < 5) {
+                Surface(
+                    color = Color.Red.copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, Color.Red.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = Color.Red,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                "CRITICAL POWER WARNING: BATTERY IS AT ${batteryPct}%",
+                                color = Color.Red,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                "Plug in Nothing Charger immediately to preserve active states and prevent sudden device shutdown.",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 8.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
                         }
                     }
                 }
@@ -580,15 +635,15 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                     }
                     val cardScale by animateFloatAsState(
                         targetValue = if (cardVisible) 1.0f else 0.9f,
-                        animationSpec = tween(
-                            durationMillis = 220,
-                            easing = FastOutSlowInEasing
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
                         ),
                         label = "card_scale"
                     )
                     val cardAlpha by animateFloatAsState(
                         targetValue = if (cardVisible) 1.0f else 0.0f,
-                        animationSpec = tween(260, easing = LinearOutSlowInEasing),
+                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
                         label = "card_alpha"
                     )
 
@@ -652,6 +707,12 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
 
                     // Conditional layout for deep dial features
                     when (tile.type) {
+                        TileType.BATTERY -> {
+                            BatteryConfigurator(viewModel, themeState)
+                        }
+                        TileType.USAGE_STATS -> {
+                            UsageStatsConfigurator(viewModel, themeState)
+                        }
                         TileType.FOCUS_TIMER -> {
                             FocusTimerConfigurator(viewModel, themeState)
                         }
@@ -726,6 +787,12 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                         }
                         TileType.MACRO_EDITOR -> {
                             MacroEditorConfigurator(viewModel, themeState)
+                        }
+                        TileType.THEATER -> {
+                            TheaterConfigurator(viewModel, tile, themeState)
+                        }
+                        TileType.FOCUS_SANDBOX -> {
+                            SandboxConfigurator(viewModel, tile, themeState)
                         }
                         else -> {
                             Text("No advanced config properties for this Bento component.", fontSize = 12.sp, color = Color.White)
@@ -1042,7 +1109,6 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
         val timeString = tiles.find { it.type == TileType.FOCUS_TIMER }?.displayValue ?: "25:00"
         FocalLockoutBodyguardOverlay(viewModel, themeState, timeString)
     }
-    }
 
     if (isBooting) {
         Box(
@@ -1056,6 +1122,7 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
             }
         }
     }
+}
 }
 }
 
@@ -1546,6 +1613,19 @@ fun FocusTimerConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
     ) {
         Text(if (isActive) "DISMISSED DEEP BODYGUARD" else "ARM DEEP BODYGUARD LOCKDOWN", fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     }
+
+    Spacer(modifier = Modifier.height(10.dp))
+    OutlinedButton(
+        onClick = { viewModel.openDndSettings() },
+        modifier = Modifier.fillMaxWidth().height(40.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+    ) {
+        Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("GRANT SYSTEM DND ACCESS", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+    }
 }
 
 @Composable
@@ -1670,6 +1750,19 @@ fun DnsConfigurator(viewModel: DashboardViewModel, themeState: ThemeState) {
         ) {
             Text("SET", fontWeight = FontWeight.Bold, fontSize = 11.sp)
         }
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+    OutlinedButton(
+        onClick = { viewModel.openPrivateDnsSettings() },
+        modifier = Modifier.fillMaxWidth().height(40.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+    ) {
+        Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("OPEN SYSTEM PRIVATE DNS OPTIONS", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
     }
 }
 
@@ -1920,6 +2013,19 @@ fun CaffeineKeeperConfigurator(viewModel: DashboardViewModel, themeState: ThemeS
             Text(it, color = themeState.accentColor.color, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
         }
     }
+
+    Spacer(modifier = Modifier.height(14.dp))
+    OutlinedButton(
+        onClick = { viewModel.openBatterySaverSettings() },
+        modifier = Modifier.fillMaxWidth().height(40.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+    ) {
+        Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("SYSTEM BATTERY SAVER CONFIG", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+    }
 }
 
 @Composable
@@ -1988,6 +2094,479 @@ fun TimeoutConfigurator(viewModel: DashboardViewModel, tile: DashboardTile, them
                 )
             }
         }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+    Text("DEEP HARDWARE INTEGRATION", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = { viewModel.openSystemWriteSettings() },
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        ) {
+            Icon(Icons.Filled.Build, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("GRANT WRITE_SETTINGS PERMISSION", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        }
+        OutlinedButton(
+            onClick = { viewModel.openDisplaySettings() },
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        ) {
+            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("OPEN SYSTEM TIMEOUT DIAL", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
+@Composable
+fun TheaterConfigurator(viewModel: DashboardViewModel, tile: DashboardTile, themeState: ThemeState) {
+    Text("Configure Cinema Theater macro. Perfect for dark quiet rooms.", fontSize = 12.sp, color = Color.White.copy(alpha = 0.7f))
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Active State:", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(
+            if (tile.isActive) "ENGAGED" else "STANDBY ACTIVE",
+            color = if (tile.isActive) themeState.accentColor.color else Color.White.copy(alpha = 0.4f),
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+    Text("PHYSICAL INTEGRATION MODULES", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = { viewModel.openDisplaySettings() },
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        ) {
+            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("BRIGHTNESS DISPLAY CALIBRATION", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        }
+        OutlinedButton(
+            onClick = { viewModel.openDndSettings() },
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        ) {
+            Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("ZEN SYSTEM AUDIO PERMISSIONS", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        }
+        
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = { viewModel.triggerTileAction(tile.id) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (tile.isActive) Color.Red else themeState.accentColor.color,
+                contentColor = Color.Black
+            )
+        ) {
+            Text(if (tile.isActive) "DISABLE THEATER MACRO" else "ENABLE THEATER MACRO", fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
+@Composable
+fun SandboxConfigurator(viewModel: DashboardViewModel, tile: DashboardTile, themeState: ThemeState) {
+    Text("Engage absolute App Sandbox Mode. This locks and pins the current view, requiring system authentication combinations to exit.", fontSize = 12.sp, color = Color.White.copy(alpha = 0.7f))
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Sandbox Status:", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(
+            if (tile.isActive) "SYSTEM LOCKED (PINNED)" else "UNLOCKED SANCTUARY",
+            color = if (tile.isActive) Color.Red else themeState.accentColor.color,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+    Text("HARDCORE LINUX INTEGRATION", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = { viewModel.openScreenPinningSettings() },
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        ) {
+            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("OPEN SYSTEM PINNING PREFS", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = { viewModel.triggerTileAction(tile.id) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (tile.isActive) Color.Red else themeState.accentColor.color,
+                contentColor = Color.Black
+            )
+        ) {
+            Text(if (tile.isActive) "RELEASE SANDBOX LOCK" else "ENGAGE SECURE SANDBOX", fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
+@Composable
+fun BatteryConfigurator(viewModel: com.example.viewmodels.DashboardViewModel, themeState: ThemeState) {
+    val pct by viewModel.batteryLevel.collectAsState()
+    val isChg by viewModel.batteryIsCharging.collectAsState()
+    val plugType by viewModel.batteryPlugType.collectAsState()
+    val health by viewModel.batteryHealth.collectAsState()
+    val temp by viewModel.batteryTemp.collectAsState()
+    val volt by viewModel.batteryVoltage.collectAsState()
+
+    Text(
+        text = "Advanced battery diagnostic systems. Monitors electric capacity curves, charging protocols and thermal factors.",
+        fontSize = 12.sp,
+        color = Color.White.copy(alpha = 0.7f)
+    )
+    Spacer(modifier = Modifier.height(14.dp))
+
+    if (pct < 5) {
+        Surface(
+            color = Color.Red.copy(alpha = 0.15f),
+            border = BorderStroke(1.dp, Color.Red),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = Color.Red,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "⚠️ CRITICAL LEVEL: BATTERY < 5%!",
+                        color = Color.Red,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "Power state is highly critical. Connect Nothing Charger immediately.",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
+    }
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Power Level:", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(
+                text = if (isChg) "⚡ $pct%" else "$pct%",
+                color = if (pct < 5) Color.Red else themeState.accentColor.color,
+                fontWeight = FontWeight.Black,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 15.sp
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        LinearProgressIndicator(
+            progress = pct / 100f,
+            modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape),
+            color = if (pct < 5) Color.Red else themeState.accentColor.color,
+            trackColor = Color.White.copy(alpha = 0.1f)
+        )
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+    Text("DIAGNOSTIC MATRIX RECORDS", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        DiagnosticRow(label = "CHARGING SOURCE", value = plugType.uppercase())
+        DiagnosticRow(label = "SYSTEM TEMPERATURE", value = String.format("%.1f °C", temp))
+        DiagnosticRow(label = "BATTERY VOLTAGE", value = "$volt mV")
+        DiagnosticRow(label = "BATTERY HEALTH STATE", value = health.uppercase())
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+    OutlinedButton(
+        onClick = { viewModel.openBatterySaverSettings() },
+        modifier = Modifier.fillMaxWidth().height(40.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+    ) {
+        Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("SYSTEM POWER CONTROL OPTIONS", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+    }
+}
+
+@Composable
+fun DiagnosticRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.02f), RoundedCornerShape(6.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = Color.White.copy(alpha = 0.6f))
+        Text(value, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = Color.White)
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun UsageStatsConfigurator(viewModel: com.example.viewmodels.DashboardViewModel, themeState: ThemeState) {
+    val ramUsed by viewModel.ramUsagePercent.collectAsState()
+    val cpuTemp by viewModel.cpuTempUnit.collectAsState()
+
+    Text(
+        text = "Interactive System Performance Monitor powered by D3.js. Renders real-time CPU thermals and Memory allocation updates.",
+        fontSize = 12.sp,
+        color = Color.White.copy(alpha = 0.7f),
+        modifier = Modifier.padding(bottom = 12.dp)
+    )
+
+    val r = (themeState.accentColor.color.red * 255).toInt()
+    val g = (themeState.accentColor.color.green * 255).toInt()
+    val b = (themeState.accentColor.color.blue * 255).toInt()
+    val accentHtmlHex = String.format("#%02X%02X%02X", r, g, b)
+
+    val htmlContent = remember(accentHtmlHex) {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+            <script src="https://d3js.org/d3.v7.min.js"></script>
+            <style>
+                body {
+                    margin: 0;
+                    padding: 4px;
+                    background-color: #161616;
+                    color: #ffffff;
+                    font-family: monospace;
+                    font-size: 10px;
+                    overflow: hidden;
+                    -webkit-user-select: none;
+                }
+                .axis path, .axis line {
+                    stroke: rgba(255, 255, 255, 0.15);
+                }
+                .axis text {
+                    fill: rgba(255, 255, 255, 0.6);
+                    font-family: monospace;
+                    font-size: 8px;
+                }
+                .grid line {
+                    stroke: rgba(255, 255, 255, 0.05);
+                    stroke-width: 1;
+                }
+                .line-cpu {
+                    fill: none;
+                    stroke: $accentHtmlHex;
+                    stroke-width: 2.5;
+                }
+                .line-mem {
+                    fill: none;
+                    stroke: #FFFFFF;
+                    stroke-width: 2.5;
+                    stroke-dasharray: 4 4;
+                }
+                .legend-item {
+                    display: inline-block;
+                    margin-right: 15px;
+                }
+                .legend-box {
+                    display: inline-block;
+                    width: 10px;
+                    height: 10px;
+                    vertical-align: middle;
+                    margin-right: 4px;
+                }
+                #legend {
+                    margin-top: 10px;
+                    text-align: center;
+                }
+            </style>
+        </head>
+        <body>
+            <div id="chart"></div>
+            <div id="legend">
+                <div class="legend-item">
+                    <span class="legend-box" style="background-color: $accentHtmlHex;"></span>
+                    <span>CPU LOAD (%)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-box" style="background-color: #FFFFFF; border: 1px dashed rgba(255,255,255,0.5);"></span>
+                    <span>MEM UTIL (%)</span>
+                </div>
+            </div>
+
+            <script>
+                const limit = 20;
+                let data = [];
+                for (let i = 0; i < limit; i++) {
+                    data.push({
+                        time: i,
+                        cpu: 40 + Math.random() * 15,
+                        mem: 50 + Math.random() * 10
+                    });
+                }
+
+                const margin = {top: 10, right: 10, bottom: 20, left: 30};
+                const width = document.documentElement.clientWidth - margin.left - margin.right - 10;
+                const height = 140 - margin.top - margin.bottom;
+
+                const svg = d3.select("#chart")
+                    .append("svg")
+                    .attr("width", width + margin.left + margin.right)
+                    .attr("height", height + margin.top + margin.bottom)
+                    .append("g")
+                    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+                const x = d3.scaleLinear().domain([0, limit - 1]).range([0, width]);
+                const y = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+
+                svg.append("g")
+                    .attr("class", "grid")
+                    .call(d3.axisLeft(y).tickSize(-width).tickFormat(""));
+
+                const xAxis = d3.axisBottom(x).ticks(5).tickFormat("");
+                const yAxis = d3.axisLeft(y).ticks(4).tickFormat(d => d + "%");
+
+                svg.append("g")
+                    .attr("class", "axis")
+                    .attr("transform", "translate(0," + height + ")")
+                    .call(xAxis);
+
+                svg.append("g")
+                    .attr("class", "axis")
+                    .call(yAxis);
+
+                const cpuLine = d3.line()
+                    .x(d => x(d.time))
+                    .y(d => y(d.cpu))
+                    .curve(d3.curveMonotoneX);
+
+                const memLine = d3.line()
+                    .x(d => x(d.time))
+                    .y(d => y(d.mem))
+                    .curve(d3.curveMonotoneX);
+
+                const cpuPath = svg.append("path")
+                    .datum(data)
+                    .attr("class", "line-cpu")
+                    .attr("d", cpuLine);
+
+                const memPath = svg.append("path")
+                    .datum(data)
+                    .attr("class", "line-mem")
+                    .attr("d", memLine);
+
+                function updateMetrics(cpuVal, memVal) {
+                    data.forEach((d, i) => {
+                        if (i < limit - 1) {
+                            d.cpu = data[i+1].cpu;
+                            d.mem = data[i+1].mem;
+                        }
+                    });
+                    data[limit - 1].cpu = cpuVal;
+                    data[limit - 1].mem = memVal;
+
+                    cpuPath.datum(data).attr("d", cpuLine);
+                    memPath.datum(data).attr("d", memLine);
+                }
+
+                window.updateMetrics = updateMetrics;
+                
+                setInterval(() => {
+                    const lastCpu = data[limit - 1].cpu;
+                    const lastMem = data[limit - 1].mem;
+                    const nextCpu = Math.max(10, Math.min(95, lastCpu + (Math.random() - 0.5) * 8));
+                    const nextMem = Math.max(10, Math.min(95, lastMem + (Math.random() - 0.5) * 4));
+                    updateMetrics(nextCpu, nextMem);
+                }, 1000);
+            </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    LaunchedEffect(ramUsed, cpuTemp) {
+        val normalizedCpuLoad = ((cpuTemp - 20) * 2.5f).coerceIn(15f, 95f)
+        webViewRef?.post {
+            webViewRef?.evaluateJavascript("if(window.updateMetrics) { window.updateMetrics($normalizedCpuLoad, $ramUsed); }", null)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(180.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    webViewClient = WebViewClient()
+                    loadDataWithBaseURL("https://localchart", htmlContent, "text/html", "UTF-8", null)
+                    webViewRef = this
+                }
+            },
+            update = { webView ->
+                webViewRef = webView
+            }
+        )
     }
 }
 
@@ -2634,159 +3213,195 @@ fun QuickNotesConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
 }
 
 // ==========================================
-// BOOT INTRO SEQUENCE RENDERER
+// BOOT INTRO SEQUENCE RENDERER (MODERN INTEGRATED 120HZ)
 // ==========================================
 
 @Composable
 fun BootScreen(themeState: ThemeState, onBootFinished: () -> Unit) {
-    val logs = remember { mutableStateListOf<String>() }
-    var bootProgress by remember { mutableStateOf(0f) }
+    var animTriggered by remember { mutableStateOf(false) }
+    
+    // Spring states for ultra-fluid 120Hz cinematic expansion
+    val scale by animateFloatAsState(
+        targetValue = if (animTriggered) 1.0f else 0.4f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "logoScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (animTriggered) 1.0f else 0.0f,
+        animationSpec = spring(stiffness = Spring.StiffnessVeryLow),
+        label = "logoAlpha"
+    )
+    
+    val rotation by rememberInfiniteTransition(label = "arcRotate").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "arcRotation"
+    )
+
+    val glowAlpha by rememberInfiniteTransition(label = "pulseGlow").animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowPulse"
+    )
 
     LaunchedEffect(Unit) {
-        val bootLogs = listOf(
-            "GLYPH_PROTOCORE_REVISION V3.0",
-            "CONNECTING PHYSICAL BACKPLANE REAR DRIVERS...",
-            "SUCCESS • 4 CORE MODULES SEEDED",
-            "MAPPING MONOCHROME PIXEL CHUNKS...",
-            "INITIALIZING AUDIO HARMONICS PIPELINE...",
-            "GLYPH_OS INITIATED SUCCESSFULLY"
-        )
-        for (log in bootLogs) {
-            logs.add(log)
-            delay(500)
-            bootProgress += 0.16f
-        }
-        bootProgress = 1f
-        delay(600)
+        animTriggered = true
+        delay(2200)
         onBootFinished()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .padding(24.dp),
+            .background(Color(0xFF0A0A0A)) // premium deep obsidian
+            .clickable(enabled = true, onClick = onBootFinished),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth()
+            verticalArrangement = Arrangement.Center
         ) {
-            // Retro Led pulse blinking
-            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-            val pulseAlpha by infiniteTransition.animateFloat(
-                initialValue = 0.2f,
-                targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(800, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "pulse"
-            )
-
-            // Dynamic Dot Matrix Logo drawn on Canvas!
             Box(
-                modifier = Modifier.size(160.dp),
+                modifier = Modifier
+                    .size(240.dp)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        this.alpha = alpha
+                    },
                 contentAlignment = Alignment.Center
             ) {
+                // Rotating glyph outer ring traces
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rows = 12
-                    val cols = 12
-                    val cellW = size.width / cols
-                    val cellH = size.height / rows
-                    val accent = themeState.accentColor.color
+                    val centerPt = Offset(size.width / 2, size.height / 2)
+                    val accentColor = themeState.accentColor.color
                     
-                    // G visual representation drawn using individual circular dot matrix segments
-                    for (r in 0 until rows) {
-                        for (c in 0 until cols) {
-                            val insideG = (r in 3..9 && c == 3) || // Left stem
-                                          (r == 3 && c in 3..9) ||  // Top stem
-                                          (r == 9 && c in 3..9) ||  // Bottom stem
-                                          (r in 6..9 && c == 9) || // Right bottom
-                                          (r == 6 && c in 6..9)    // horizontal bar
-                            
-                            val isPulseDot = (r == 1 && c == 9) // Simulated red blinking Glyph LED
-                            
-                            if (isPulseDot) {
-                                drawCircle(
-                                    color = Color.Red.copy(alpha = pulseAlpha),
-                                    radius = cellW / 2.6f,
-                                    center = Offset(c * cellW + cellW/2, r * cellH + cellH/2)
-                                )
-                            } else if (insideG) {
-                                drawCircle(
-                                    color = accent,
-                                    radius = cellW / 3.4f,
-                                    center = Offset(c * cellW + cellW/2, r * cellH + cellH/2)
-                                )
-                            } else {
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.04f),
-                                    radius = cellW / 5f,
-                                    center = Offset(c * cellW + cellW/2, r * cellH + cellH/2)
-                                )
+                    // Hardware-inspired Glyph signature arcs
+                    drawArc(
+                        color = accentColor.copy(alpha = glowAlpha * 0.85f),
+                        startAngle = rotation,
+                        sweepAngle = 100f,
+                        useCenter = false,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 6.dp.toPx(),
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+                    )
+                    
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.05f),
+                        radius = size.width / 2.2f,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                    )
+
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.15f),
+                        startAngle = rotation + 180f,
+                        sweepAngle = 120f,
+                        useCenter = false,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 3.dp.toPx(),
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+                    )
+                    
+                    // Red physical status indicator
+                    drawCircle(
+                        color = Color.Red.copy(alpha = glowAlpha),
+                        radius = 4.dp.toPx(),
+                        center = centerPt + Offset(size.width / 4.5f, -size.height / 4.5f)
+                    )
+                }
+
+                // Internal signature physical Matrix-inspired G Logo Symbol
+                Box(
+                    modifier = Modifier.size(100.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val cols = 8
+                        val rows = 8
+                        val cellW = size.width / cols
+                        val cellH = size.height / rows
+                        val accent = themeState.accentColor.color
+                        for (r in 0 until rows) {
+                            for (c in 0 until cols) {
+                                val inG = (r in 2..5 && c == 2) || 
+                                          (r == 2 && c in 2..5) || 
+                                          (r == 5 && c in 2..5) || 
+                                          (r in 4..5 && c == 5) || 
+                                          (r == 4 && c in 4..5)
+                                if (inG) {
+                                    drawCircle(
+                                        color = accent,
+                                        radius = cellW / 3.2f,
+                                        center = Offset(c * cellW + cellW / 2, r * cellH + cellH / 2)
+                                    )
+                                } else {
+                                    drawCircle(
+                                        color = Color.White.copy(alpha = 0.06f),
+                                        radius = cellW / 6f,
+                                        center = Offset(c * cellW + cellW / 2, r * cellH + cellH / 2)
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
+            Spacer(modifier = Modifier.height(30.dp))
+
+            Text(
+                text = "N O T H I N G",
+                style = androidx.compose.ui.text.TextStyle(
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 6.sp
+                )
+            )
+            
+            Text(
+                text = "GLYPH ENGINE 3.0 • FLUID 120HZ COMPLIANT",
+                style = androidx.compose.ui.text.TextStyle(
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Light,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 2.sp
+                ),
+                modifier = Modifier.padding(top = 8.dp)
+            )
+
             Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = "GLYPH OPERATING SYSTEM",
-                fontWeight = FontWeight.Black,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                color = Color.White,
-                letterSpacing = 2.sp
-            )
-            Text(
-                text = "STABLE MONO RUNTIME • DEPLOYED OK",
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                color = Color.White.copy(alpha = 0.4f),
-                letterSpacing = 1.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Diagnostic log feeds
-            Column(
+            
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(100.dp)
-                    .background(Color(0xFF0C0C0C), RoundedCornerShape(8.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                    .clickable { onBootFinished() }
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
-                logs.forEach { log ->
-                    Text(
-                        text = "• $log",
-                        color = themeState.accentColor.color,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            LinearProgressIndicator(
-                progress = bootProgress,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(CircleShape),
-                color = themeState.accentColor.color,
-                trackColor = Color.White.copy(alpha = 0.1f)
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-            TextButton(onClick = onBootFinished) {
-                Text("SKIP MATRIX BOOT", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text(
+                    text = "SKIP INTRO",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -3387,7 +4002,7 @@ fun FocalLockoutBodyguardOverlay(
                         when (appToShow) {
                             "Phone" -> SimulatedPhoneWorkspace(themeState, contentTint)
                             "Messages" -> SimulatedMessagesWorkspace(themeState, contentTint)
-                            "Settings" -> SimulatedSettingsWorkspace(themeState, contentTint)
+                            "Settings" -> SimulatedSettingsWorkspace(viewModel, themeState, contentTint)
                             "Maps" -> SimulatedMapsWorkspace(themeState, contentTint)
                             "Clock" -> SimulatedClockWorkspace(themeState, contentTint)
                             else -> SimulatedSoundscapeWorkspace(themeState, contentTint, appToShow)
@@ -3579,14 +4194,14 @@ fun SimulatedMessagesWorkspace(themeState: ThemeState, contentTint: Color) {
 }
 
 @Composable
-fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
+fun SimulatedSettingsWorkspace(viewModel: com.example.viewmodels.DashboardViewModel, themeState: ThemeState, contentTint: Color) {
     var wifiOn by remember { mutableStateOf(true) }
     var bluetoothOn by remember { mutableStateOf(false) }
     var hapticFeedbackEnabled by remember { mutableStateOf(true) }
     var glyphBrightness by remember { mutableStateOf(0.7f) }
 
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("PERMITTED ZEN SYSTEM CONTROLS", fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("PERMITTED ZEN SYSTEM CONTROLS", fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -3594,8 +4209,8 @@ fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Study WiFi Link", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
-                Text("Nothing Net 5G status", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+                Text("Study WiFi Link", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = contentTint)
+                Text("Nothing Net 5G status", fontSize = 9.sp, color = contentTint.copy(alpha = 0.5f))
             }
             Switch(
                 checked = wifiOn,
@@ -3613,8 +4228,8 @@ fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Bluetooth Beacon", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
-                Text("External Audio Receivers", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+                Text("Bluetooth Beacon", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = contentTint)
+                Text("External Audio Receivers", fontSize = 9.sp, color = contentTint.copy(alpha = 0.5f))
             }
             Switch(
                 checked = bluetoothOn,
@@ -3632,8 +4247,8 @@ fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Bento Tactile Ticking", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
-                Text("Haptic helper feedback vibration pulse", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+                Text("Bento Tactile Ticking", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = contentTint)
+                Text("Haptic helper vibration pulse", fontSize = 9.sp, color = contentTint.copy(alpha = 0.5f))
             }
             Switch(
                 checked = hapticFeedbackEnabled,
@@ -3646,7 +4261,7 @@ fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
         }
 
         Column {
-            Text("Glyph Ring Power: ${(glyphBrightness * 100).toInt()}%", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
+            Text("Glyph Ring Power: ${(glyphBrightness * 100).toInt()}%", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = contentTint)
             Slider(
                 value = glyphBrightness,
                 onValueChange = { glyphBrightness = it },
@@ -3655,6 +4270,23 @@ fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
                     activeTrackColor = themeState.accentColor.color
                 )
             )
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Button(
+            onClick = { viewModel.resetAllToFactoryDefaults() },
+            modifier = Modifier.fillMaxWidth().height(42.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Red.copy(alpha = 0.15f),
+                contentColor = Color.Red
+            ),
+            border = BorderStroke(1.dp, Color.Red.copy(alpha = 0.4f))
+        ) {
+            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("RESET SYSTEM TO DEFAULTS", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
         }
     }
 }

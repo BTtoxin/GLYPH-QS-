@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
       val tiles by viewModel.tiles.collectAsState()
       val themeState by viewModel.themeState.collectAsState()
       val caffeineEnabled = tiles.find { it.type == TileType.CAFFEINE }?.isActive == true
+      val sandboxActive by viewModel.sandboxActive.collectAsState()
       
       if (caffeineEnabled) {
           window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -33,7 +34,19 @@ class MainActivity : ComponentActivity() {
           window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
       }
 
-      MyApplicationTheme(darkTheme = themeState.isDarkMode, accentColor = themeState.accentColor.color) {
+      androidx.compose.runtime.LaunchedEffect(sandboxActive) {
+          try {
+              if (sandboxActive) {
+                  startLockTask()
+              } else {
+                  stopLockTask()
+              }
+          } catch (e: Exception) {
+              e.printStackTrace()
+          }
+      }
+
+      MyApplicationTheme(themeState = themeState) {
         Surface(modifier = Modifier.fillMaxSize()) {
           DashboardScreen(viewModel)
         }

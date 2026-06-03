@@ -26,6 +26,7 @@ import com.example.models.ThemeState
 import com.example.models.AccentColorType
 import com.example.models.BackgroundStyle
 import com.example.models.TileShape
+import com.example.models.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -122,6 +123,30 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     // Global gesture pad overlay active state
     private val _gesturePadActive = MutableStateFlow(false)
     val gesturePadActive = _gesturePadActive.asStateFlow()
+
+    // Sandbox lock active flow representing "Sand Mode"
+    private val _sandboxActive = MutableStateFlow(false)
+    val sandboxActive = _sandboxActive.asStateFlow()
+
+    // Detailed battery metrics
+    private val _batteryLevel = MutableStateFlow(85)
+    val batteryLevel = _batteryLevel.asStateFlow()
+    private val _batteryIsCharging = MutableStateFlow(false)
+    val batteryIsCharging = _batteryIsCharging.asStateFlow()
+    private val _batteryPlugType = MutableStateFlow("Discharging")
+    val batteryPlugType = _batteryPlugType.asStateFlow()
+    private val _batteryHealth = MutableStateFlow("Good")
+    val batteryHealth = _batteryHealth.asStateFlow()
+    private val _batteryTemp = MutableStateFlow(32.4f)
+    val batteryTemp = _batteryTemp.asStateFlow()
+    private val _batteryVoltage = MutableStateFlow(3850)
+    val batteryVoltage = _batteryVoltage.asStateFlow()
+    private var batteryWarnToastShown = false
+
+    // Magnetic compass sensor fields
+    private var sensorManager: android.hardware.SensorManager? = null
+    private var compassListener: android.hardware.SensorEventListener? = null
+    private var hasPhysicalCompass = false
 
     // ==========================================
     // MASSIVE EXPANSION PROPERTIES (15+ NEW FEATURES)
@@ -269,6 +294,45 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
                 val isChg = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
                 
+                val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+                val plugStr = when (plugged) {
+                    BatteryManager.BATTERY_PLUGGED_AC -> "AC Charger"
+                    BatteryManager.BATTERY_PLUGGED_USB -> "USB Port"
+                    BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Wireless"
+                    else -> if (isChg) "Charging" else "Discharging"
+                }
+                
+                val health = intent.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)
+                val healthStr = when (health) {
+                    BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+                    BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheat"
+                    BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+                    BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over Voltage"
+                    BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Failure"
+                    else -> "Healthy"
+                }
+                
+                val tempTenths = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 320)
+                val tempC = tempTenths / 10f
+                val voltMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 3850)
+                
+                _batteryLevel.value = pct
+                _batteryIsCharging.value = isChg
+                _batteryPlugType.value = plugStr
+                _batteryHealth.value = healthStr
+                _batteryTemp.value = tempC
+                _batteryVoltage.value = voltMv
+                
+                // Low battery warnings threshold < 5%
+                if (pct < 5) {
+                    if (!batteryWarnToastShown) {
+                        Toast.makeText(context ?: getApplication(), "⚠️ CRITICAL POWER STATE: Battery is extremely low ($pct%)!", Toast.LENGTH_LONG).show()
+                        batteryWarnToastShown = true
+                    }
+                } else {
+                    batteryWarnToastShown = false
+                }
+                
                 val displayText = if (isChg) "⚡ $pct% (Charging)" else "$pct% Discharging"
 
                 // Update Battery tile info
@@ -291,6 +355,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         registerBatteryReceiver()
         calculateDeviceStorage()
         startLiveSimulations()
+        startPhysicalCompass()
 
         // Fast periodic sync with Widget actions and Quick settings tiles
         viewModelScope.launch {
@@ -299,6 +364,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 if (prefs.getBoolean("tile_active_change_flag", false)) {
                     prefs.edit().putBoolean("tile_active_change_flag", false).apply()
                     val remoteFocus = prefs.getBoolean("tile_active_focus_timer", false)
+                    val remoteCaffeine = prefs.getBoolean("caffeine_multiplier", false)
+                    
                     val focusTile = _tiles.value.find { it.type == TileType.FOCUS_TIMER }
                     if (focusTile != null && remoteFocus != focusTile.isActive) {
                         _tiles.update { list ->
@@ -306,6 +373,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                                 if (it.type == TileType.FOCUS_TIMER) {
                                     handleFocusTimer(remoteFocus, it)
                                     it.copy(isActive = remoteFocus)
+                                } else {
+                                    it
+                                }
+                            }
+                        }
+                    }
+
+                    val caffeineTile = _tiles.value.find { it.type == TileType.CAFFEINE }
+                    if (caffeineTile != null && remoteCaffeine != caffeineTile.isActive) {
+                        _tiles.update { list ->
+                            list.map {
+                                if (it.type == TileType.CAFFEINE) {
+                                    it.copy(isActive = remoteCaffeine)
                                 } else {
                                     it
                                 }
@@ -329,11 +409,14 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val styleIndex = prefs.getInt("bg_style", BackgroundStyle.SOLID_BLACK.ordinal)
         val shapeIndex = prefs.getInt("tile_shape", TileShape.ROUNDED.ordinal)
         val isDarkMode = prefs.getBoolean("is_dark_mode", true)
+        val modeIndex = prefs.getInt("theme_mode", ThemeMode.SYSTEM.ordinal)
+        val decodedMode = ThemeMode.values().getOrElse(modeIndex) { ThemeMode.SYSTEM }
         _themeState.value = ThemeState(
             accentColor = AccentColorType.values().getOrElse(accentIndex) { AccentColorType.RED },
             backgroundStyle = BackgroundStyle.values().getOrElse(styleIndex) { BackgroundStyle.SOLID_BLACK },
             tileShape = TileShape.values().getOrElse(shapeIndex) { TileShape.ROUNDED },
-            isDarkMode = isDarkMode
+            isDarkMode = isDarkMode,
+            themeMode = decodedMode
         )
 
         _gridMode.value = prefs.getInt("grid_mode", 4)
@@ -370,6 +453,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             putInt("bg_style", _themeState.value.backgroundStyle.ordinal)
             putInt("tile_shape", _themeState.value.tileShape.ordinal)
             putBoolean("is_dark_mode", _themeState.value.isDarkMode)
+            putInt("theme_mode", _themeState.value.themeMode.ordinal)
             apply()
         }
     }
@@ -634,6 +718,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                         TileType.CAFFEINE -> {
                             handleCaffeineLock(newState)
+                            if (newState) {
+                                Toast.makeText(application, "Caffeine Mode SUCCESS: Screen Lock Engaged (${_caffeineOption.value})", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(application, "Caffeine Mode DISABLED: Screen Lock Released", Toast.LENGTH_SHORT).show()
+                            }
                             tile.copy(isActive = newState)
                         }
                         TileType.GLYPH -> {
@@ -641,8 +730,77 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                             tile.copy(isActive = newState)
                         }
                         TileType.THEATER -> {
+                            val am = application.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                            val nm = application.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
                             if (newState) {
-                                Toast.makeText(application, "Theater Mode Macro Triggered - Brightness Low, DND Simulator active", Toast.LENGTH_SHORT).show()
+                                try {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                        if (android.provider.Settings.System.canWrite(application)) {
+                                            android.provider.Settings.System.putInt(
+                                                application.contentResolver,
+                                                android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                                10
+                                            )
+                                        }
+                                    } else {
+                                        android.provider.Settings.System.putInt(
+                                            application.contentResolver,
+                                            android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                            10
+                                        )
+                                    }
+                                } catch (e: Exception) { e.printStackTrace() }
+                                
+                                try {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                        if (nm != null && nm.isNotificationPolicyAccessGranted) {
+                                            am?.ringerMode = android.media.AudioManager.RINGER_MODE_SILENT
+                                        }
+                                    } else {
+                                        am?.ringerMode = android.media.AudioManager.RINGER_MODE_SILENT
+                                    }
+                                } catch (e: Exception) { e.printStackTrace() }
+                                
+                                Toast.makeText(application, "Theater Mode active: Ultra Dim Display + Ringer Muted", Toast.LENGTH_SHORT).show()
+                            } else {
+                                try {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                        if (android.provider.Settings.System.canWrite(application)) {
+                                            android.provider.Settings.System.putInt(
+                                                application.contentResolver,
+                                                android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                                140
+                                            )
+                                        }
+                                    } else {
+                                        android.provider.Settings.System.putInt(
+                                            application.contentResolver,
+                                            android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                            140
+                                        )
+                                    }
+                                } catch (e: Exception) { e.printStackTrace() }
+                                
+                                try {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                        if (nm != null && nm.isNotificationPolicyAccessGranted) {
+                                            am?.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
+                                        }
+                                    } else {
+                                        am?.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
+                                    }
+                                } catch (e: Exception) { e.printStackTrace() }
+                                
+                                Toast.makeText(application, "Theater Mode inactive. Brightness & Audio restored", Toast.LENGTH_SHORT).show()
+                            }
+                            tile.copy(isActive = newState)
+                        }
+                        TileType.FOCUS_SANDBOX -> {
+                            _sandboxActive.value = newState
+                            if (newState) {
+                                Toast.makeText(application, "Deep Sand Sandbox engaged. Screen pinned. (Hold Back+Overview to exit)", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(application, "Sandbox released.", Toast.LENGTH_SHORT).show()
                             }
                             tile.copy(isActive = newState)
                         }
@@ -741,6 +899,32 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun handleFocusTimer(isActive: Boolean, tile: DashboardTile) {
         focusTimerJob?.cancel()
+        val application = getApplication<Application>()
+        val nm = application.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        val am = application.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+        
+        try {
+            if (isActive) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    if (nm != null && nm.isNotificationPolicyAccessGranted) {
+                        nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_NONE)
+                    }
+                } else {
+                    am?.ringerMode = android.media.AudioManager.RINGER_MODE_SILENT
+                }
+                Toast.makeText(application, "Deep Focus active: Do Not Disturb active", Toast.LENGTH_SHORT).show()
+            } else {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    if (nm != null && nm.isNotificationPolicyAccessGranted) {
+                        nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
+                    }
+                } else {
+                    am?.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
+                }
+                Toast.makeText(application, "Deep Focus completed / stopped. DND off", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+
         if (isActive) {
             var timeLeft = _focusMinutes.value * 60
             focusTimerJob = viewModelScope.launch {
@@ -751,6 +935,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     val secs = timeLeft % 60
                     updateTileDisplay(tile.id, String.format("%02d:%02d", mins, secs))
                 }
+                
+                // turn off DND once timer completes naturally
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        if (nm != null && nm.isNotificationPolicyAccessGranted) {
+                            nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
+                        }
+                    } else {
+                        am?.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+
                 updateTileDisplay(tile.id, String.format("%02d:00", _focusMinutes.value))
                 _tiles.update { list -> list.map { if (it.id == tile.id) it.copy(isActive = false) else it } }
                 prefs.edit().putBoolean("tile_active_focus_timer", false).apply()
@@ -799,11 +995,37 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private var glyphBlinkJob: Job? = null
+
     private fun triggerGlyphBlink(isActive: Boolean) {
+        glyphBlinkJob?.cancel()
+        _isGlyphBlinking.value = isActive
         if (isActive) {
-            _isGlyphBlinking.value = true
-        } else {
-            _isGlyphBlinking.value = false
+            val application = getApplication<Application>()
+            glyphBlinkJob = viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    val cameraManager = application.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    val cameraId = cameraManager.cameraIdList.getOrNull(0)
+                    if (cameraId != null) {
+                        var flashState = false
+                        while (_isGlyphBlinking.value) {
+                            flashState = !flashState
+                            cameraManager.setTorchMode(cameraId, flashState)
+                            delay(180)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    try {
+                        val cameraManager = application.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        val cameraId = cameraManager.cameraIdList.getOrNull(0)
+                        if (cameraId != null) {
+                            cameraManager.setTorchMode(cameraId, false)
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+            }
         }
     }
 
@@ -830,6 +1052,267 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         prefs.edit().putString("private_dns", dns).apply()
         _tiles.update { list ->
             list.map { if (it.type == TileType.DNS) it.copy(displayValue = dns) else it }
+        }
+    }
+
+    fun startPhysicalCompass() {
+        val application = getApplication<Application>()
+        try {
+            val sm = application.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager ?: return
+            sensorManager = sm
+            
+            val sensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
+            if (sensor != null) {
+                compassListener = object : android.hardware.SensorEventListener {
+                    private val rotationMatrix = FloatArray(9)
+                    private val orientationAngles = FloatArray(3)
+                    
+                    override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                        if (event.sensor.type == android.hardware.Sensor.TYPE_ROTATION_VECTOR) {
+                            android.hardware.SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                            android.hardware.SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                            val azimuthRad = orientationAngles[0]
+                            var degrees = Math.toDegrees(azimuthRad.toDouble()).toFloat()
+                            if (degrees < 0) {
+                                degrees += 360f
+                            }
+                            hasPhysicalCompass = true
+                            _compassBearing.value = degrees
+                            updateCompassDisplay(degrees)
+                        }
+                    }
+                    override fun onAccuracyChanged(s: android.hardware.Sensor?, accuracy: Int) {}
+                }
+                sm.registerListener(compassListener, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+            } else {
+                val magSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_MAGNETIC_FIELD)
+                val accSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+                if (magSensor != null && accSensor != null) {
+                    compassListener = object : android.hardware.SensorEventListener {
+                        private val gravity = FloatArray(3)
+                        private val geomagnetic = FloatArray(3)
+                        private val R = FloatArray(9)
+                        private val I = FloatArray(9)
+                        private val orientation = FloatArray(3)
+                        
+                        override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                            if (event.sensor.type == android.hardware.Sensor.TYPE_ACCELEROMETER) {
+                                System.arraycopy(event.values, 0, gravity, 0, 3)
+                            } else if (event.sensor.type == android.hardware.Sensor.TYPE_MAGNETIC_FIELD) {
+                                System.arraycopy(event.values, 0, geomagnetic, 0, 3)
+                            }
+                            
+                            if (android.hardware.SensorManager.getRotationMatrix(R, I, gravity, geomagnetic)) {
+                                android.hardware.SensorManager.getOrientation(R, orientation)
+                                val azimuthRad = orientation[0]
+                                var degrees = Math.toDegrees(azimuthRad.toDouble()).toFloat()
+                                if (degrees < 0) {
+                                    degrees += 360f
+                                }
+                                hasPhysicalCompass = true
+                                _compassBearing.value = degrees
+                                updateCompassDisplay(degrees)
+                            }
+                        }
+                        override fun onAccuracyChanged(s: android.hardware.Sensor?, accuracy: Int) {}
+                    }
+                    sm.registerListener(compassListener, magSensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+                    sm.registerListener(compassListener, accSensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun stopPhysicalCompass() {
+        try {
+            compassListener?.let {
+                sensorManager?.unregisterListener(it)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        compassListener = null
+    }
+
+    private fun updateCompassDisplay(bearing: Float) {
+        val dirs = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        val dirStr = dirs[(((bearing + 22.5f) % 360f) / 45f).toInt()]
+        updateTileDisplayDirect(TileType.COMPASS, String.format("%.0f° %s", bearing, dirStr))
+    }
+
+    fun openSystemWriteSettings() {
+        val application = getApplication<Application>()
+        try {
+            val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                data = android.net.Uri.parse("package:" + application.packageName)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            application.startActivity(intent)
+            Toast.makeText(application, "Opening System Write Settings", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                application.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(application, "Settings not supported on this device", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun openDisplaySettings() {
+        val application = getApplication<Application>()
+        try {
+            val intent = android.content.Intent(android.provider.Settings.ACTION_DISPLAY_SETTINGS).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            application.startActivity(intent)
+            Toast.makeText(application, "Opening Display & Timeout settings", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(application, "Display setting intent failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openDndSettings() {
+        val application = getApplication<Application>()
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                application.startActivity(intent)
+                Toast.makeText(application, "Grant Do Not Disturb / Zen policy access", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(application, "DND access not required on this Android version", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(application, "Notification settings failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openBatterySaverSettings() {
+        val application = getApplication<Application>()
+        try {
+            val intent = android.content.Intent(android.provider.Settings.ACTION_BATTERY_SAVER_SETTINGS).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            application.startActivity(intent)
+            Toast.makeText(application, "Opening Battery Saver settings", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(application, "Battery saver settings failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openScreenPinningSettings() {
+        val application = getApplication<Application>()
+        try {
+            val intent = android.content.Intent("android.settings.SCREEN_PINNING_SETTINGS").apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            application.startActivity(intent)
+            Toast.makeText(application, "Opening System Screen Pinning options", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                application.startActivity(intent)
+                Toast.makeText(application, "Opening System Security Settings", Toast.LENGTH_SHORT).show()
+            } catch (ex: Exception) {
+                Toast.makeText(application, "Screen pinning settings failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun openPrivateDnsSettings() {
+        val application = getApplication<Application>()
+        try {
+            val intent = android.content.Intent("android.settings.PRIVATE_DNS_SETTINGS").apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            application.startActivity(intent)
+            Toast.makeText(application, "Opening System Private DNS panels", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                application.startActivity(intent)
+                Toast.makeText(application, "Opening Network settings (Private DNS located inside)", Toast.LENGTH_LONG).show()
+            } catch (ex: Exception) {
+                Toast.makeText(application, "Network settings failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun resetAllToFactoryDefaults() {
+        val application = getApplication<Application>()
+        try {
+            // 1. Clear SharedPreferences
+            prefs.edit().clear().apply()
+            
+            // 2. Shut down ongoing mode runtimes
+            caffeineTimerJob?.cancel()
+            _caffeineTimeLeft.value = null
+            focusTimerJob?.cancel()
+            
+            // 3. Reset local properties
+            _sandboxActive.value = false
+            _isGlyphBlinking.value = false
+            _currentDns.value = "Cloudflare (1.1.1.1)"
+            _wifiSsid.value = "Nothing_Net_5G"
+            _wifiPass.value = "dotmatrix2026"
+            _glyphIntensity.value = 80
+            
+            // 4. Reload defaults & reinitialize presets
+            loadPreferences()
+            
+            val defaultList = listOf(
+                DashboardTile("battery", TileType.BATTERY, TileType.BATTERY.defaultSize, isActive = false, displayValue = "88%"),
+                DashboardTile("storage", TileType.STORAGE, TileType.STORAGE.defaultSize, isActive = false, displayValue = "Calculating..."),
+                DashboardTile("usage_stats", TileType.USAGE_STATS, TileType.USAGE_STATS.defaultSize, isActive = true),
+                DashboardTile("focus_timer", TileType.FOCUS_TIMER, TileType.FOCUS_TIMER.defaultSize, displayValue = "25:00"),
+                DashboardTile("focus_sandbox", TileType.FOCUS_SANDBOX, TileType.FOCUS_SANDBOX.defaultSize),
+                DashboardTile("caffeine", TileType.CAFFEINE, TileType.CAFFEINE.defaultSize),
+                DashboardTile("theater", TileType.THEATER, TileType.THEATER.defaultSize),
+                DashboardTile("desk_lock", TileType.DESK_LOCK, TileType.DESK_LOCK.defaultSize),
+                DashboardTile("wifi", TileType.WIFI, TileType.WIFI.defaultSize, isActive = true),
+                DashboardTile("bluetooth", TileType.BLUETOOTH, TileType.BLUETOOTH.defaultSize, isActive = false),
+                DashboardTile("wifi_share", TileType.WIFI_SHARE, TileType.WIFI_SHARE.defaultSize),
+                DashboardTile("dns", TileType.DNS, TileType.DNS.defaultSize, displayValue = _currentDns.value),
+                DashboardTile("clipboard", TileType.CLIPBOARD, TileType.CLIPBOARD.defaultSize),
+                DashboardTile("flashlight", TileType.FLASHLIGHT, TileType.FLASHLIGHT.defaultSize),
+                DashboardTile("screen_timeout", TileType.SCREEN_TIMEOUT, TileType.SCREEN_TIMEOUT.defaultSize, displayValue = "30s"),
+                DashboardTile("shortcuts", TileType.SHORTCUTS, TileType.SHORTCUTS.defaultSize, displayValue = "Shortcut Mapping"),
+                DashboardTile("glyph", TileType.GLYPH, TileType.GLYPH.defaultSize, displayValue = "80% Intensity"),
+                DashboardTile("terminal", TileType.TERMINAL, TileType.TERMINAL.defaultSize, displayValue = "user@nothing:~$"),
+                DashboardTile("compass", TileType.COMPASS, TileType.COMPASS.defaultSize, displayValue = "84° N"),
+                DashboardTile("ram_booster", TileType.RAM_BOOSTER, TileType.RAM_BOOSTER.defaultSize, displayValue = "68% Used"),
+                DashboardTile("decibel_meter", TileType.DECIBEL_METER, TileType.DECIBEL_METER.defaultSize, displayValue = "42 dB"),
+                DashboardTile("morse_flasher", TileType.MORSE_FLASHER, TileType.MORSE_FLASHER.defaultSize, displayValue = "Morse Ready"),
+                DashboardTile("speed_test", TileType.SPEED_TEST, TileType.SPEED_TEST.defaultSize, displayValue = "0.0 Mbps"),
+                DashboardTile("stopwatch", TileType.STOPWATCH, TileType.STOPWATCH.defaultSize, displayValue = "00:00.00"),
+                DashboardTile("metronome", TileType.METRONOME, TileType.METRONOME.defaultSize, displayValue = "120 BPM"),
+                DashboardTile("soundboard", TileType.SOUNDBOARD, TileType.SOUNDBOARD.defaultSize, displayValue = "O-Synth Square"),
+                DashboardTile("pixel_art", TileType.PIXEL_ART, TileType.PIXEL_ART.defaultSize, displayValue = "Matrix Active"),
+                DashboardTile("reaction_test", TileType.REACTION_TEST, TileType.REACTION_TEST.defaultSize, displayValue = "Not Started"),
+                DashboardTile("dice_coin", TileType.DICE_COIN, TileType.DICE_COIN.defaultSize, displayValue = "Ready"),
+                DashboardTile("cpu_temp", TileType.CPU_TEMP, TileType.CPU_TEMP.defaultSize, displayValue = "41°C"),
+                DashboardTile("password_gen", TileType.PASSWORD_GEN, TileType.PASSWORD_GEN.defaultSize, displayValue = "Keys Active"),
+                DashboardTile("world_clock", TileType.WORLD_CLOCK, TileType.WORLD_CLOCK.defaultSize, displayValue = "Global"),
+                DashboardTile("quick_notes", TileType.QUICK_NOTES, TileType.QUICK_NOTES.defaultSize, displayValue = "Memo Active"),
+                DashboardTile("macro_editor", TileType.MACRO_EDITOR, TileType.MACRO_EDITOR.defaultSize, displayValue = "Scenarios Active")
+            )
+            _tiles.value = defaultList
+            persistTileOrder(defaultList)
+            
+            Toast.makeText(application, "Reset all custom Glyphs & system mode configurations to factory defaults", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(application, "Reset operation encountered an error", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -954,11 +1437,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             while (true) {
                 delay(1500)
                 // 1. Compass slight rotation simulation
-                degree = (degree + r.nextInt(-4, 5) + 360f) % 360f
-                _compassBearing.value = degree
-                val dirs = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
-                val dirStr = dirs[(((degree + 22.5f) % 360f) / 45f).toInt()]
-                updateTileDisplayDirect(TileType.COMPASS, String.format("%.0f° %s", degree, dirStr))
+                if (!hasPhysicalCompass) {
+                    degree = (degree + r.nextInt(-4, 5) + 360f) % 360f
+                    _compassBearing.value = degree
+                    val dirs = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+                    val dirStr = dirs[(((degree + 22.5f) % 360f) / 45f).toInt()]
+                    updateTileDisplayDirect(TileType.COMPASS, String.format("%.0f° %s", degree, dirStr))
+                }
 
                 // 2. Decibel noise meter fluctuations simulation
                 val db = r.nextInt(35, 76)
@@ -1420,6 +1905,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     override fun onCleared() {
         super.onCleared()
+        stopPhysicalCompass()
         focusTimerJob?.cancel()
         caffeineTimerJob?.cancel()
         simulationJob?.cancel()

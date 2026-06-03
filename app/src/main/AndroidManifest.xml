@@ -36,6 +36,28 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".services.BentoThemeTileService"
+            android:exported="true"
+            android:label="Bento Theme"
+            android:icon="@android:drawable/ic_menu_compass"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".services.BentoCaffeineTileService"
+            android:exported="true"
+            android:label="Bento Caffeine"
+            android:icon="@android:drawable/ic_menu_day"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".widget.BentoAppWidgetProvider"
             android:exported="true"

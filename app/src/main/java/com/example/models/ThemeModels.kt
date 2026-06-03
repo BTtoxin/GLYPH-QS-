@@ -22,9 +22,16 @@ enum class AccentColorType(val displayName: String, val color: Color) {
     WHITE("Crisp White", Color(0xFFFFFFFF))
 }
 
+enum class ThemeMode(val displayName: String) {
+    LIGHT("Light"),
+    DARK("Dark"),
+    SYSTEM("System Auto")
+}
+
 data class ThemeState(
     val accentColor: AccentColorType = AccentColorType.RED,
     val backgroundStyle: BackgroundStyle = BackgroundStyle.SOLID_BLACK,
     val tileShape: TileShape = TileShape.ROUNDED,
-    val isDarkMode: Boolean = true
+    val isDarkMode: Boolean = true,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM
 )
