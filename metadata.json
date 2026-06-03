@@ -1,0 +1,6 @@
+{
+  "name": "Glyph QS",
+  "description": "A highly customizable 'Nothing OS' styled productivity and utility dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
