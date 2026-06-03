@@ -13,6 +13,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -647,11 +652,20 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                         animationSpec = spring(stiffness = Spring.StiffnessMedium),
                         label = "card_alpha"
                     )
+                    val cardOffsetY by animateDpAsState(
+                        targetValue = if (cardVisible) 0.dp else 22.dp,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioLowBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        ),
+                        label = "card_offset_y"
+                    )
 
                     Box(modifier = Modifier.graphicsLayer {
                         scaleX = cardScale
                         scaleY = cardScale
                         alpha = cardAlpha
+                        translationY = cardOffsetY.toPx()
                     }) {
                         TileItem(
                             tile = tile,
@@ -659,6 +673,11 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                             isDeepFocusActive = isDeepFocusActive,
                             themeState = themeState,
                             isSelectedInEdit = isSelectedInEdit,
+                            onLongClick = {
+                                val currentSz = tile.size
+                                val nextSz = if (currentSz == TileSize.SMALL) TileSize.LARGE_SQUARE else TileSize.SMALL
+                                viewModel.resizeTile(tile.id, nextSz)
+                            },
                             onClick = {
                                 if (isEditMode) {
                                     viewModel.handleTileClickInEditMode(tile.id)
@@ -673,6 +692,33 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                             }
                         )
                     }
+                }
+
+                // 1. Dot-matrix Quick Settings panel
+                item(span = { GridItemSpan(gridMode) }) {
+                    QuickSettingsPanel(
+                        viewModel = viewModel,
+                        themeState = themeState,
+                        modifier = Modifier.padding(top = 10.dp)
+                    )
+                }
+
+                // 2. System performance diagnostics
+                item(span = { GridItemSpan(gridMode) }) {
+                    PerformanceMetricsWidget(
+                        viewModel = viewModel,
+                        themeState = themeState,
+                        modifier = Modifier.padding(top = 10.dp)
+                    )
+                }
+
+                // 3. Glyphy diagnostic AI Chat companion
+                item(span = { GridItemSpan(gridMode) }) {
+                    GlyphyChatWidget(
+                        viewModel = viewModel,
+                        themeState = themeState,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 20.dp)
+                    )
                 }
             }
         }
@@ -705,6 +751,47 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
+
+                    // Grid size toggle Row for state management (1x1 vs 2x2)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "GRID SPAN TYPE",
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val sizes = listOf(TileSize.SMALL, TileSize.LARGE_SQUARE)
+                            sizes.forEach { sz ->
+                                val isSelected = tile.size == sz
+                                val label = if (sz == TileSize.SMALL) "1x1 (Small)" else "2x2 (Large)"
+                                Button(
+                                    onClick = {
+                                        viewModel.resizeTile(tile.id, sz)
+                                        activeControlTile = tile.copy(size = sz)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isSelected) themeState.accentColor.color else Color.White.copy(alpha = 0.1f),
+                                        contentColor = if (isSelected) Color.Black else Color.White
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Text(label, fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
 
                     // Conditional layout for deep dial features
                     when (tile.type) {
@@ -1276,12 +1363,14 @@ fun TileSize.displayName(): String {
 // ==========================================
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun TileItem(
     tile: DashboardTile,
     customLabel: String,
     isDeepFocusActive: Boolean,
     themeState: ThemeState,
     isSelectedInEdit: Boolean,
+    onLongClick: () -> Unit = {},
     onClick: () -> Unit
 ) {
     val isActive = tile.isActive
@@ -1296,7 +1385,7 @@ fun TileItem(
         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
     )
     
-    val shape = when (themeState.tileShape) {
+    val bentoShape = when (themeState.tileShape) {
         TileShape.ROUNDED -> RoundedCornerShape(16.dp)
         TileShape.SQUIRCLE -> RoundedCornerShape(26.dp)
         TileShape.SQUARE -> RoundedCornerShape(2.dp)
@@ -1308,17 +1397,44 @@ fun TileItem(
     )
 
     val editBorder = if (isSelectedInEdit) {
-        Modifier.border(2.dp, themeState.accentColor.color, shape)
+        Modifier.border(2.dp, themeState.accentColor.color, bentoShape)
     } else Modifier
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isTactileActive = isHovered || isPressed
+
+    val hoverScale by animateFloatAsState(
+        targetValue = if (isTactileActive) 1.04f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "tactile_scale"
+    )
+    val animatedShadowElevation by animateDpAsState(
+        targetValue = if (isTactileActive) 8.dp else 0.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "tactile_shadow"
+    )
 
     Box(
         modifier = Modifier
             .height(height)
             .fillMaxWidth()
-            .clip(shape)
+            .graphicsLayer {
+                scaleX = hoverScale
+                scaleY = hoverScale
+                this.shadowElevation = animatedShadowElevation.toPx()
+                this.shape = bentoShape
+                clip = true
+            }
+            .clip(bentoShape)
             .background(containerColor.copy(alpha = containerColor.alpha * dimmedAlpha))
-            .clickable(
+            .hoverable(interactionSource)
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current,
                 enabled = !isDeepFocusActive || tile.type == TileType.FOCUS_TIMER,
+                onLongClick = onLongClick,
                 onClick = onClick
             )
             .then(editBorder)

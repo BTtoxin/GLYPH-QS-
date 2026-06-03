@@ -1,6 +1,7 @@
 package com.example.viewmodels
 
 import android.app.Application
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -165,6 +166,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val ramUsagePercent = _ramUsagePercent.asStateFlow()
     private val _isRamCleaning = MutableStateFlow(false)
     val isRamCleaning = _isRamCleaning.asStateFlow()
+
+    // 2b. CPU usage and live history
+    private val _cpuUsagePercent = MutableStateFlow(42)
+    val cpuUsagePercent = _cpuUsagePercent.asStateFlow()
+    private val _cpuHistory = MutableStateFlow<List<Float>>(List(15) { 25f + Random.nextFloat() * 30f })
+    val cpuHistory = _cpuHistory.asStateFlow()
+
+    // 2c. System quick toggles state
+    private val _isAirplaneModeActive = MutableStateFlow(false)
+    val isAirplaneModeActive = _isAirplaneModeActive.asStateFlow()
+
+    // 2d. Generative chat interface (Glyphy via Gemini API)
+    private val _aiChatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val aiChatMessages = _aiChatMessages.asStateFlow()
+    private val _isAiLoading = MutableStateFlow(false)
+    val isAiLoading = _isAiLoading.asStateFlow()
 
     // 3. Decibel Noise Meter
     private val _decibelValue = MutableStateFlow(42)
@@ -1674,6 +1691,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 _cpuTempUnit.value = temp
                 updateTileDisplayDirect(TileType.CPU_TEMP, "$temp°C")
 
+                // Maintain CPU usage fluctuations and historical tick array
+                val nextCpu = 12f + r.nextFloat() * 56f
+                _cpuUsagePercent.value = nextCpu.toInt()
+                _cpuHistory.update { history ->
+                    history.drop(1) + nextCpu
+                }
+
                 // 4. World Clocks live state ticking updates
                 val nowSecs = System.currentTimeMillis() / 1000
                 val formatClock = { offsetHrs: Int ->
@@ -2155,4 +2179,111 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             e.printStackTrace()
         }
     }
+
+    fun setAirplaneModeActive(active: Boolean) {
+        _isAirplaneModeActive.value = active
+        playTickTone(ToneGenerator.TONE_PROP_BEEP2)
+        val app = getApplication<Application>()
+        Toast.makeText(app, if (active) "Airplane Mode Enabled" else "Airplane Mode Disabled", Toast.LENGTH_SHORT).show()
+    }
+
+    fun sendChatMessage(text: String) {
+        if (text.isBlank()) return
+        val userMsg = ChatMessage("user", text)
+        _aiChatMessages.update { it + userMsg }
+        _isAiLoading.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val responseText = callGeminiApi(text)
+            _aiChatMessages.update { it + ChatMessage("gemini", responseText) }
+            _isAiLoading.value = false
+            playTickTone(ToneGenerator.TONE_PROP_BEEP)
+        }
+    }
+
+    private fun callGeminiApi(prompt: String): String {
+        val apiKey = try {
+            com.example.BuildConfig.GEMINI_API_KEY
+        } catch (e: Exception) {
+            ""
+        }
+        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+            return "Glyphy is ready! To start chatting, please set your Gemini API Key in the AI Studio Secrets panel."
+        }
+
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        val systemInstruction = "You are Glyphy, the official Nothing OS style Glyph Dashboard AI companion. " +
+                "Provide brief, ultra-concise system diagnostics, productivity summaries or control suggestions. " +
+                "Be extremely direct and bulleted, keeping answers under 3 lines. Use monochrome accents and subtle technical tone."
+
+        val jsonPayload = """
+            {
+              "contents": [
+                {
+                  "parts": [
+                    {
+                      "text": "${prompt.replace("\"", "\\\"").replace("\n", "\\n")}"
+                    }
+                  ]
+                }
+              ],
+              "systemInstruction": {
+                "parts": [
+                  {
+                    "text": "$systemInstruction"
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val body = okhttp3.RequestBody.create(
+            "application/json; charset=utf-8".toMediaTypeOrNull(),
+            jsonPayload
+        )
+
+        val request = okhttp3.Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey")
+            .post(body)
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                if (response.isSuccessful && responseBody != null) {
+                    val textStart = responseBody.indexOf("\"text\": \"")
+                    if (textStart != -1) {
+                        val actualStart = textStart + 9
+                        val textEnd = responseBody.indexOf("\"", actualStart)
+                        if (textEnd != -1) {
+                            val rawText = responseBody.substring(actualStart, textEnd)
+                            rawText
+                                .replace("\\n", "\n")
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\")
+                        } else {
+                            "Unable to parse response."
+                        }
+                    } else {
+                        "No text generated."
+                    }
+                } else {
+                    "Error code: HTTP ${response.code}"
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "Glyphy timed out. Please check your network connection: ${e.localizedMessage}"
+        }
+    }
 }
+
+data class ChatMessage(
+    val sender: String, // "user" or "gemini"
+    val text: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
