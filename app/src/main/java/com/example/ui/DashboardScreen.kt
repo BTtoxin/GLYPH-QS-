@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.rememberScrollState
@@ -493,6 +494,30 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                                 ) {
                                     Text(
                                         style.displayName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (sel) Color.Black else Color.White
+                                    )
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Text("Active System Theme Mode", fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color.White)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(true, false).forEach { isDark ->
+                                val sel = themeState.isDarkMode == isDark
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (sel) themeState.accentColor.color else Color.White.copy(alpha = 0.08f))
+                                        .clickable { viewModel.updateThemeState(themeState.copy(isDarkMode = isDark)) }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        if (isDark) "Nothing Dark" else "Nothing Light",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (sel) Color.Black else Color.White
@@ -986,6 +1011,11 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
             modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
         )
     }
+
+    if (isDeepFocusActive) {
+        val timeString = tiles.find { it.type == TileType.FOCUS_TIMER }?.displayValue ?: "25:00"
+        FocalLockoutBodyguardOverlay(viewModel, themeState, timeString)
+    }
 }
 }
 
@@ -1380,8 +1410,10 @@ fun FocusTimerConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
     val tiles by viewModel.tiles.collectAsState()
     val focusTile = tiles.find { it.type == TileType.FOCUS_TIMER }
     val isActive = focusTile?.isActive == true
+    val focusMinutes by viewModel.focusMinutes.collectAsState()
+    val whitelist by viewModel.whitelistedApps.collectAsState()
 
-    Text("Configure time parameters for the Deep Focus Sandbox. Focus limits device activities.", fontSize = 12.sp, color = Color.White.copy(alpha = 0.7f))
+    Text("Configure your Deep Focus parameters. When active, Zen Bodyguard shields your phone.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
     Spacer(modifier = Modifier.height(12.dp))
 
     // Interactive Timer Progress
@@ -1389,11 +1421,80 @@ fun FocusTimerConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("Timer State:", fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-        Text(if (isActive) "Active Count" else "Ready", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = themeState.accentColor.color)
+        Text("Timer State:", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        Text(if (isActive) "BODYGUARD RUNNING" else "STANDBY READY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (isActive) Color.Red else themeState.accentColor.color)
     }
 
     Spacer(modifier = Modifier.height(12.dp))
+
+    if (!isActive) {
+        Text("Select Timeout Duration: ${focusMinutes} Min (${String.format("%.1f", focusMinutes / 60.0)} hrs)", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+        Spacer(modifier = Modifier.height(4.dp))
+        Slider(
+            value = focusMinutes.toFloat(),
+            onValueChange = { viewModel.setFocusMinutes(it.toInt()) },
+            valueRange = 1f..240f,
+            colors = SliderDefaults.colors(
+                thumbColor = themeState.accentColor.color,
+                activeTrackColor = themeState.accentColor.color,
+                inactiveTrackColor = Color.White.copy(alpha = 0.12f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text("Permitted Ecosystem Whitelist:", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        Spacer(modifier = Modifier.height(6.dp))
+
+        val whitelistRow1 = listOf("Phone", "Messages", "Settings", "Maps", "Clock")
+        val whitelistRow2 = listOf("Spotify", "Calculator", "WhatsApp", "YouTube", "Chrome")
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                whitelistRow1.forEach { app ->
+                    val isWhitelisted = whitelist.contains(app)
+                    val isEssential = app in listOf("Phone", "Messages", "Settings")
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isWhitelisted) themeState.accentColor.color.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.04f))
+                            .border(1.dp, if (isWhitelisted) themeState.accentColor.color else Color.White.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                            .clickable { if (!isEssential) viewModel.toggleAppWhitelist(app) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = (if (isWhitelisted) "✓ " else "+ ") + app,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isWhitelisted) themeState.accentColor.color else Color.White
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                whitelistRow2.forEach { app ->
+                    val isWhitelisted = whitelist.contains(app)
+                    val isEssential = app in listOf("Phone", "Messages", "Settings")
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isWhitelisted) themeState.accentColor.color.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.04f))
+                            .border(1.dp, if (isWhitelisted) themeState.accentColor.color else Color.White.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                            .clickable { if (!isEssential) viewModel.toggleAppWhitelist(app) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = (if (isWhitelisted) "✓ " else "+ ") + app,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isWhitelisted) themeState.accentColor.color else Color.White
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+    }
 
     Button(
         onClick = { viewModel.triggerTileAction(focusTile?.id ?: "") },
@@ -1403,7 +1504,7 @@ fun FocusTimerConfigurator(viewModel: DashboardViewModel, themeState: ThemeState
             contentColor = Color.Black
         )
     ) {
-        Text(if (isActive) "TERMINATE DEEP FOCUS" else "ENGAGE DEEP FOCUS", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        Text(if (isActive) "DISMISSED DEEP BODYGUARD" else "ARM DEEP BODYGUARD LOCKDOWN", fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     }
 }
 
@@ -2921,3 +3022,778 @@ fun MacroEditorConfigurator(viewModel: DashboardViewModel, themeState: com.examp
         }
     }
 }
+
+@Composable
+fun FocalLockoutBodyguardOverlay(
+    viewModel: DashboardViewModel,
+    themeState: ThemeState,
+    timeString: String
+) {
+    val context = LocalContext.current
+    val whitelist by viewModel.whitelistedApps.collectAsState()
+    
+    // Hold count to override (5 seconds bypass helper)
+    var holdTicks by remember { mutableStateOf(0f) }
+    val maxTicks = 100f
+    var holding by remember { mutableStateOf(false) }
+
+    LaunchedEffect(holding) {
+        if (holding) {
+            while (holdTicks < maxTicks) {
+                delay(30)
+                holdTicks += 2f
+                if (holdTicks.toInt() % 15 == 0) {
+                    try {
+                        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(22, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        } else {
+                            vibrator.vibrate(22)
+                        }
+                    } catch (e: Exception) {}
+                }
+            }
+            // Toggle focus off!
+            val tiles = viewModel.tiles.value
+            val ft = tiles.find { it.type == TileType.FOCUS_TIMER }
+            if (ft != null) {
+                viewModel.triggerTileAction(ft.id)
+            }
+            holdTicks = 0f
+            holding = false
+        } else {
+            while (holdTicks > 0) {
+                delay(15)
+                holdTicks = (holdTicks - 4f).coerceAtLeast(0f)
+            }
+        }
+    }
+
+    // Interactive whitelisted app simulations selection
+    var simulatedAppSelected by remember { mutableStateOf<String?>(null) }
+
+    val overlayBg = if (themeState.isDarkMode) Color.Black else Color.White
+    val contentTint = if (themeState.isDarkMode) Color.White else Color.Black
+    val mutedTint = if (themeState.isDarkMode) Color.White.copy(alpha = 0.5f) else Color.Black.copy(alpha = 0.5f)
+    val cardBg = if (themeState.isDarkMode) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.04f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(overlayBg)
+            .clickable(enabled = true, onClick = {}) // swallow background touch events completely
+            .padding(24.dp)
+    ) {
+        if (simulatedAppSelected == null) {
+            // Main Bodyguard Lockdown view
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Top Indicator Header
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 16.dp)) {
+                    Text(
+                        text = "● DEEP FOCUS BODYGUARD ACTIVE",
+                        color = themeState.accentColor.color,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Unapproved phone resources blocked to safeguard study flow.",
+                        color = mutedTint,
+                        fontSize = 10.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                }
+
+                // Centered Massive Digital Timer Badge
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .then(Modifier.graphicsLayer(scaleX = 1.1f, scaleY = 1.1f))
+                        .padding(vertical = 12.dp)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(160.dp)
+                    ) {
+                        // Drawing minimalist bounding dots outer ring
+                        Canvas(modifier = Modifier.size(150.dp)) {
+                            val r = size.width / 2
+                            val cnt = 36
+                            for (i in 0 until cnt) {
+                                val deg = (i * 360 / cnt).toFloat()
+                                val rad = Math.toRadians(deg.toDouble())
+                                val startX = center.x + (r - 8.dp.toPx()) * Math.cos(rad).toFloat()
+                                val startY = center.y + (r - 8.dp.toPx()) * Math.sin(rad).toFloat()
+                                drawCircle(
+                                    color = if (i % 6 == 0) themeState.accentColor.color else contentTint.copy(alpha = 0.2f),
+                                    radius = if (i % 6 == 0) 3.dp.toPx() else 1.5.dp.toPx(),
+                                    center = Offset(startX, startY)
+                                )
+                            }
+                        }
+
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = timeString,
+                                color = contentTint,
+                                fontSize = 38.sp,
+                                fontWeight = FontWeight.Light,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = (-1).sp
+                            )
+                            Text(
+                                text = "REMAINING",
+                                color = mutedTint,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = 2.sp
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "[ MATRIX PROTOCOLS ENGAGED ]",
+                        color = themeState.accentColor.color,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
+
+                // Permitted Whitelisted apps deck
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "PERMITTED ECOSYSTEM CHANNELS",
+                        color = contentTint,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        whitelist.forEach { appName ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(cardBg)
+                                    .border(1.dp, contentTint.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                                    .clickable { simulatedAppSelected = appName }
+                                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    val sysIcon = when (appName) {
+                                        "Phone" -> Icons.Default.Call
+                                        "Messages" -> Icons.Default.Email
+                                        "Settings" -> Icons.Default.Settings
+                                        "Maps" -> Icons.Default.LocationOn
+                                        "Clock" -> Icons.Default.DateRange
+                                        "Spotify" -> Icons.Default.PlayArrow
+                                        "Calculator" -> Icons.Default.Check
+                                        "WhatsApp" -> Icons.Default.Send
+                                        "YouTube" -> Icons.Default.PlayArrow
+                                        "Chrome" -> Icons.Default.Search
+                                        else -> Icons.Default.Info
+                                    }
+                                    Icon(
+                                        imageVector = sysIcon,
+                                        contentDescription = appName,
+                                        tint = themeState.accentColor.color,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = appName.uppercase(),
+                                        color = contentTint,
+                                        fontSize = 8.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Tactile press-to-hold emergency override segment
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.Red.copy(alpha = 0.08f))
+                            .border(1.dp, Color.Red.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                            .pointerInput(holding) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        holding = event.changes.any { it.pressed }
+                                    }
+                                }
+                            }
+                            .padding(14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    progress = holdTicks / maxTicks,
+                                    color = Color.Red,
+                                    strokeWidth = 3.dp,
+                                    modifier = Modifier.fillMaxSize(),
+                                    trackColor = Color.Red.copy(alpha = 0.15f)
+                                )
+                                Text(
+                                    text = "${(5 - (holdTicks / maxTicks * 5).toInt()).coerceAtLeast(1)}s",
+                                    fontSize = 8.sp,
+                                    color = Color.Red,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text(
+                                text = "PRESS & HOLD TO OVERRIDE LOCKDOWN",
+                                color = Color.Red,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Display Whitelisted Permitted App Simulated UI
+            val appToShow = simulatedAppSelected ?: "Phone"
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(overlayBg)
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Header with back trigger
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { simulatedAppSelected = null }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "back", tint = contentTint)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "$appToShow Workspace",
+                                color = contentTint,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(themeState.accentColor.color.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "BODYGUARD ON",
+                                color = themeState.accentColor.color,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(10.dp))
+                    
+                    // Box rendering App's simulator interface
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(cardBg)
+                            .padding(16.dp)
+                    ) {
+                        when (appToShow) {
+                            "Phone" -> SimulatedPhoneWorkspace(themeState, contentTint)
+                            "Messages" -> SimulatedMessagesWorkspace(themeState, contentTint)
+                            "Settings" -> SimulatedSettingsWorkspace(themeState, contentTint)
+                            "Maps" -> SimulatedMapsWorkspace(themeState, contentTint)
+                            "Clock" -> SimulatedClockWorkspace(themeState, contentTint)
+                            else -> SimulatedSoundscapeWorkspace(themeState, contentTint, appToShow)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(14.dp))
+                    
+                    Button(
+                        onClick = { simulatedAppSelected = null },
+                        colors = ButtonDefaults.buttonColors(containerColor = contentTint),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "SUSPEND $appToShow & RETURN TO BODYGUARD",
+                            color = overlayBg,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SimulatedPhoneWorkspace(themeState: ThemeState, contentTint: Color) {
+    var dialedNumber by remember { mutableStateOf("") }
+    var callingState by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Display
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = if (callingState) "DIALING VIA BENTO LINK..." else "ZEN SAFE DIALER",
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = themeState.accentColor.color
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = dialedNumber.ifEmpty { "Enter Number" },
+                fontSize = 26.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Light,
+                color = if (dialedNumber.isEmpty()) contentTint.copy(alpha = 0.3f) else contentTint
+            )
+            if (callingState) {
+                Spacer(modifier = Modifier.height(14.dp))
+                CircularProgressIndicator(color = themeState.accentColor.color, modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("Calling connected. Touch Disconnect to abort.", fontSize = 9.sp, color = contentTint.copy(alpha = 0.6f))
+            }
+        }
+
+        if (!callingState) {
+            // Keypad
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val buttons = listOf(
+                    listOf("1", "2", "3"),
+                    listOf("4", "5", "6"),
+                    listOf("7", "8", "9"),
+                    listOf("*", "0", "#")
+                )
+                buttons.forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        row.forEach { d ->
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(contentTint.copy(alpha = 0.08f))
+                                    .clickable { dialedNumber += d }
+                                    .padding(14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = d, color = contentTint, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(
+                    onClick = { dialedNumber = "" },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                ) {
+                    Text("CLEAR", color = Color.White, fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { if (dialedNumber.isNotEmpty()) callingState = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = themeState.accentColor.color)
+                ) {
+                    Text("IN-APP CALL", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else {
+            Button(
+                onClick = { callingState = false },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+            ) {
+                Text("DISCONNECT", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun SimulatedMessagesWorkspace(themeState: ThemeState, contentTint: Color) {
+    val messages = remember {
+        mutableStateListOf(
+            Pair("Carl", "Keep up the studying! Nothing can stop you."),
+            Pair("System", "Zen Bodyguard has safely intercepted 14 potential notifications."),
+            Pair("Alex", "Let me know when you're done with the deep study session.")
+        )
+    }
+    var currentInput by remember { mutableStateOf("") }
+
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            messages.forEach { pair ->
+                val isMe = pair.first == "Me"
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isMe) themeState.accentColor.color.copy(alpha = 0.25f) else contentTint.copy(alpha = 0.08f))
+                            .border(1.dp, if (isMe) themeState.accentColor.color else Color.Transparent, RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    ) {
+                        Column {
+                            Text(text = pair.first, fontWeight = FontWeight.Bold, fontSize = 9.sp, color = themeState.accentColor.color)
+                            Text(text = pair.second, fontSize = 12.sp, color = contentTint)
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = currentInput,
+                onValueChange = { currentInput = it },
+                label = { Text("Tape message...", fontSize = 10.sp) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = themeState.accentColor.color,
+                    unfocusedBorderColor = contentTint.copy(alpha = 0.3f)
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = {
+                    if (currentInput.isNotEmpty()) {
+                        messages.add(Pair("Me", currentInput))
+                        currentInput = ""
+                    }
+                },
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(themeState.accentColor.color)
+            ) {
+                Icon(Icons.Default.Send, contentDescription = "send", tint = Color.Black)
+            }
+        }
+    }
+}
+
+@Composable
+fun SimulatedSettingsWorkspace(themeState: ThemeState, contentTint: Color) {
+    var wifiOn by remember { mutableStateOf(true) }
+    var bluetoothOn by remember { mutableStateOf(false) }
+    var hapticFeedbackEnabled by remember { mutableStateOf(true) }
+    var glyphBrightness by remember { mutableStateOf(0.7f) }
+
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("PERMITTED ZEN SYSTEM CONTROLS", fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Study WiFi Link", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
+                Text("Nothing Net 5G status", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+            }
+            Switch(
+                checked = wifiOn,
+                onCheckedChange = { wifiOn = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = themeState.accentColor.color,
+                    checkedTrackColor = themeState.accentColor.color.copy(alpha = 0.3f)
+                )
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Bluetooth Beacon", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
+                Text("External Audio Receivers", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+            }
+            Switch(
+                checked = bluetoothOn,
+                onCheckedChange = { bluetoothOn = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = themeState.accentColor.color,
+                    checkedTrackColor = themeState.accentColor.color.copy(alpha = 0.3f)
+                )
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Bento Tactile Ticking", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
+                Text("Haptic helper feedback vibration pulse", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+            }
+            Switch(
+                checked = hapticFeedbackEnabled,
+                onCheckedChange = { hapticFeedbackEnabled = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = themeState.accentColor.color,
+                    checkedTrackColor = themeState.accentColor.color.copy(alpha = 0.3f)
+                )
+            )
+        }
+
+        Column {
+            Text("Glyph Ring Power: ${(glyphBrightness * 100).toInt()}%", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = contentTint)
+            Slider(
+                value = glyphBrightness,
+                onValueChange = { glyphBrightness = it },
+                colors = SliderDefaults.colors(
+                    thumbColor = themeState.accentColor.color,
+                    activeTrackColor = themeState.accentColor.color
+                )
+            )
+        }
+    }
+}
+
+@Composable
+fun SimulatedMapsWorkspace(themeState: ThemeState, contentTint: Color) {
+    var compassAngle by remember { mutableStateOf(0f) }
+    var locationName by remember { mutableStateOf("Zen Central College") }
+    
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(120)
+            compassAngle = (compassAngle + 1.2f) % 360f
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("ZEN VECTOR NAVIGATION SYSTEM", fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Destination: $locationName", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = contentTint)
+        }
+
+        Box(
+            modifier = Modifier.size(130.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(110.dp)) {
+                val center = Offset(size.width / 2, size.height / 2)
+                drawCircle(color = contentTint.copy(alpha = 0.1f))
+                
+                // Draw coordinate grids
+                drawLine(contentTint.copy(alpha = 0.15f), Offset(0f, center.y), Offset(size.width, center.y))
+                drawLine(contentTint.copy(alpha = 0.15f), Offset(center.x, 0f), Offset(center.x, size.height))
+                
+                // Draw compass needle
+                rotate(compassAngle, center) {
+                    drawTriangleNeedle(this, center, themeState.accentColor.color)
+                }
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Navigation Guideline: Proceed Straight 400m", fontSize = 11.sp, color = contentTint)
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    locationName = if (locationName.contains("Central")) "Nothing Lab Headquarters" else "Zen Central College"
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = themeState.accentColor.color)
+            ) {
+                Text("RE-ROUTE DESTINATION", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+private fun drawTriangleNeedle(drawScope: androidx.compose.ui.graphics.drawscope.DrawScope, center: Offset, color: Color) {
+    val path = androidx.compose.ui.graphics.Path().apply {
+        moveTo(center.x, center.y - 45.dp.value)
+        lineTo(center.x - 8.dp.value, center.y)
+        lineTo(center.x + 8.dp.value, center.y)
+        close()
+    }
+    drawScope.drawPath(path, color = color)
+}
+
+@Composable
+fun SimulatedClockWorkspace(themeState: ThemeState, contentTint: Color) {
+    var alarmHour by remember { mutableStateOf(7) }
+    var alarmMinute by remember { mutableStateOf(30) }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("ZEN SAFE TIMING / ALARMS", fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = String.format("%02d:%02d AM", alarmHour, alarmMinute),
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = contentTint
+            )
+            Text("CURRENT ACTIVE ZEN ALARM", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+        }
+
+        Column {
+            Text("Set Alarm Hours", fontSize = 11.sp, color = contentTint)
+            Slider(
+                value = alarmHour.toFloat(),
+                onValueChange = { alarmHour = it.toInt() },
+                valueRange = 1f..12f,
+                colors = SliderDefaults.colors(thumbColor = themeState.accentColor.color)
+            )
+
+            Text("Set Alarm Minutes", fontSize = 11.sp, color = contentTint)
+            Slider(
+                value = alarmMinute.toFloat(),
+                onValueChange = { alarmMinute = it.toInt() },
+                valueRange = 0f..59f,
+                colors = SliderDefaults.colors(thumbColor = themeState.accentColor.color)
+            )
+        }
+
+        Text("Focus Mode locks system sound: Alarm will pulse haptically.", fontSize = 9.sp, color = contentTint.copy(alpha = 0.5f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
+@Composable
+fun SimulatedSoundscapeWorkspace(themeState: ThemeState, contentTint: Color, appName: String) {
+    var isPlaying by remember { mutableStateOf(false) }
+    var soundProgress by remember { mutableStateOf(0.4f) }
+
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            while (true) {
+                delay(800)
+                soundProgress = (soundProgress + 0.02f)
+                if (soundProgress >= 1f) soundProgress = 0f
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("PERMITTED ZEN ECOSYSTEM AUDIO", fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = themeState.accentColor.color)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Channel: $appName Link", fontSize = 12.sp, color = contentTint)
+        }
+
+        // Beautiful visualizer bar columns
+        Row(
+            modifier = Modifier.height(60.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val count = 8
+            for (i in 0 until count) {
+                val waveHeight = if (isPlaying) {
+                    remember { (10..50).random() }.dp
+                } else {
+                    12.dp
+                }
+                Box(
+                    modifier = Modifier
+                        .width(6.dp)
+                        .height(waveHeight)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(if (i % 2 == 0) themeState.accentColor.color else contentTint.copy(alpha = 0.4f))
+                )
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Track: Ambient Slate Resonance", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = contentTint)
+            Text("Bento Audio Lab - Studio Deep", fontSize = 10.sp, color = contentTint.copy(alpha = 0.5f))
+            
+            Spacer(modifier = Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = soundProgress,
+                color = themeState.accentColor.color,
+                trackColor = contentTint.copy(alpha = 0.12f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+            )
+        }
+    }
+}
+

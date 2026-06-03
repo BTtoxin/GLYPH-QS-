@@ -33,7 +33,7 @@ class MainActivity : ComponentActivity() {
           window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
       }
 
-      MyApplicationTheme(accentColor = themeState.accentColor.color) {
+      MyApplicationTheme(darkTheme = themeState.isDarkMode, accentColor = themeState.accentColor.color) {
         Surface(modifier = Modifier.fillMaxSize()) {
           DashboardScreen(viewModel)
         }

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/bento_widget_background"
+    android:padding="12dp">
+
+    <!-- Header Grid Title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="● BENTO MATRIX"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-condensed" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/widget_active_tag"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="STANDBY"
+            android:textColor="#FF2A2A"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#2C2C2C"
+        android:layout_marginBottom="10dp" />
+
+    <!-- Info & Controls split area -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Status Details -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1.2"
+            android:orientation="vertical"
+            android:layout_marginEnd="6dp">
+
+            <TextView
+                android:id="@+id/widget_status_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ZEN FOCUS"
+                android:textColor="#8E8E8E"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/widget_status_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Off (Locked)"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:id="@+id/widget_detail_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Memory Boost: Clean"
+                android:textColor="#8E8E8E"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <!-- Buttons Column -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1.4"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <!-- Focus Trigger Button -->
+            <LinearLayout
+                android:id="@+id/widget_btn_focus"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:orientation="vertical"
+                android:background="@drawable/bento_widget_button"
+                android:gravity="center"
+                 android:clickable="true"
+                android:focusable="true"
+                android:layout_marginEnd="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="FOCUS"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <!-- Purge Clipboard Button -->
+            <LinearLayout
+                android:id="@+id/widget_btn_purge"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:orientation="vertical"
+                android:background="@drawable/bento_widget_button"
+                 android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:layout_marginEnd="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="PURGE"
+                    android:textColor="#FF2A2A"
+                    android:textStyle="bold"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <!-- Toggle Light/Dark Theme Button -->
+            <LinearLayout
+                android:id="@+id/widget_btn_theme"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:orientation="vertical"
+                android:background="@drawable/bento_widget_button"
+                 android:clickable="true"
+                android:focusable="true"
+                android:gravity="center">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="THEME"
+                    android:textColor="#CCCCCC"
+                    android:textStyle="bold"
+                    android:textSize="10sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_updated_time"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Last updated: Just now"
+        android:textColor="#8E8E8E"
+        android:textSize="8sp"
+        android:gravity="end"
+        android:layout_marginTop="4dp" />
+</LinearLayout>

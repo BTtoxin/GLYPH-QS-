@@ -217,6 +217,42 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _notesSandbox = MutableStateFlow("Nothing is final.\n- Carl Pei")
     val notesSandbox = _notesSandbox.asStateFlow()
 
+    // 16. Custom Deep Focus parameters (1m to 4h) and Whitelist apps
+    private val _focusMinutes = MutableStateFlow(25)
+    val focusMinutes = _focusMinutes.asStateFlow()
+
+    private val _whitelistedApps = MutableStateFlow(listOf("Phone", "Messages", "Settings", "Maps", "Clock"))
+    val whitelistedApps = _whitelistedApps.asStateFlow()
+
+    fun setFocusMinutes(minutes: Int) {
+        val bounded = minutes.coerceIn(1, 240)
+        _focusMinutes.value = bounded
+        // If focus tile is standby, reset its text representation
+        _tiles.update { list ->
+            list.map {
+                if (it.type == TileType.FOCUS_TIMER && !it.isActive) {
+                    it.copy(displayValue = String.format("%02d:00", bounded))
+                } else {
+                    it
+                }
+            }
+        }
+    }
+
+    fun toggleAppWhitelist(appName: String) {
+        _whitelistedApps.update { current ->
+            if (current.contains(appName)) {
+                if (appName in listOf("Phone", "Messages", "Settings")) {
+                    current // Essential services cannot be removed
+                } else {
+                    current.minus(appName)
+                }
+            } else {
+                current.plus(appName)
+            }
+        }
+    }
+
     // Private system controllers
     private var focusTimerJob: Job? = null
     private var caffeineTimerJob: Job? = null
@@ -255,16 +291,49 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         registerBatteryReceiver()
         calculateDeviceStorage()
         startLiveSimulations()
+
+        // Fast periodic sync with Widget actions and Quick settings tiles
+        viewModelScope.launch {
+            while (true) {
+                delay(600)
+                if (prefs.getBoolean("tile_active_change_flag", false)) {
+                    prefs.edit().putBoolean("tile_active_change_flag", false).apply()
+                    val remoteFocus = prefs.getBoolean("tile_active_focus_timer", false)
+                    val focusTile = _tiles.value.find { it.type == TileType.FOCUS_TIMER }
+                    if (focusTile != null && remoteFocus != focusTile.isActive) {
+                        _tiles.update { list ->
+                            list.map {
+                                if (it.type == TileType.FOCUS_TIMER) {
+                                    handleFocusTimer(remoteFocus, it)
+                                    it.copy(isActive = remoteFocus)
+                                } else {
+                                    it
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Keep theme in perfect sync with what's selected by the widget!
+                val remoteDark = prefs.getBoolean("is_dark_mode", true)
+                val localDark = _themeState.value.isDarkMode
+                if (remoteDark != localDark) {
+                    _themeState.update { it.copy(isDarkMode = remoteDark) }
+                }
+            }
+        }
     }
 
     private fun loadPreferences() {
         val accentIndex = prefs.getInt("accent_color", AccentColorType.RED.ordinal)
         val styleIndex = prefs.getInt("bg_style", BackgroundStyle.SOLID_BLACK.ordinal)
         val shapeIndex = prefs.getInt("tile_shape", TileShape.ROUNDED.ordinal)
+        val isDarkMode = prefs.getBoolean("is_dark_mode", true)
         _themeState.value = ThemeState(
             accentColor = AccentColorType.values().getOrElse(accentIndex) { AccentColorType.RED },
             backgroundStyle = BackgroundStyle.values().getOrElse(styleIndex) { BackgroundStyle.SOLID_BLACK },
-            tileShape = TileShape.values().getOrElse(shapeIndex) { TileShape.ROUNDED }
+            tileShape = TileShape.values().getOrElse(shapeIndex) { TileShape.ROUNDED },
+            isDarkMode = isDarkMode
         )
 
         _gridMode.value = prefs.getInt("grid_mode", 4)
@@ -300,6 +369,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             putInt("accent_color", _themeState.value.accentColor.ordinal)
             putInt("bg_style", _themeState.value.backgroundStyle.ordinal)
             putInt("tile_shape", _themeState.value.tileShape.ordinal)
+            putBoolean("is_dark_mode", _themeState.value.isDarkMode)
             apply()
         }
     }
@@ -416,6 +486,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         saveThemePreferences()
     }
 
+    fun toggleThemeMode() {
+        val current = _themeState.value
+        _themeState.value = current.copy(isDarkMode = !current.isDarkMode)
+        saveThemePreferences()
+        playTickTone(ToneGenerator.TONE_PROP_BEEP)
+    }
+
     fun setGridMode(columns: Int) {
         _gridMode.value = columns
         prefs.edit().putInt("grid_mode", columns).apply()
@@ -499,7 +576,43 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     when (tile.type) {
                         TileType.FOCUS_TIMER -> {
                             handleFocusTimer(newState, tile)
+                            prefs.edit().putBoolean("tile_active_focus_timer", newState).apply()
                             tile.copy(isActive = newState)
+                        }
+                        TileType.SCREEN_TIMEOUT -> {
+                            val timeoutStr = tile.displayValue ?: "30s"
+                            val timeoutMs = when (timeoutStr) {
+                                "15s" -> 15 * 1000
+                                "30s" -> 30 * 1000
+                                "1m" -> 60 * 1000
+                                "5m" -> 5 * 60 * 1000
+                                "10m" -> 10 * 60 * 1000
+                                else -> 30 * 1000
+                            }
+                            try {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                    if (android.provider.Settings.System.canWrite(application)) {
+                                        android.provider.Settings.System.putInt(
+                                            application.contentResolver,
+                                            android.provider.Settings.System.SCREEN_OFF_TIMEOUT,
+                                            timeoutMs
+                                        )
+                                        Toast.makeText(application, "System Screen Timeout configured to $timeoutStr", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(application, "Timeout simulated: $timeoutStr. (Grant system write settings permission to apply globally)", Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    android.provider.Settings.System.putInt(
+                                        application.contentResolver,
+                                        android.provider.Settings.System.SCREEN_OFF_TIMEOUT,
+                                        timeoutMs
+                                    )
+                                    Toast.makeText(application, "Screen Timeout configured to $timeoutStr", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(application, "Timeout simulated: $timeoutStr", Toast.LENGTH_SHORT).show()
+                            }
+                            tile.copy(isActive = true)
                         }
                         TileType.CLIPBOARD -> {
                             val clipManager = application.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -600,7 +713,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private fun handleFocusTimer(isActive: Boolean, tile: DashboardTile) {
         focusTimerJob?.cancel()
         if (isActive) {
-            var timeLeft = 25 * 60
+            var timeLeft = _focusMinutes.value * 60
             focusTimerJob = viewModelScope.launch {
                 while (timeLeft > 0) {
                     delay(1000)
@@ -609,11 +722,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     val secs = timeLeft % 60
                     updateTileDisplay(tile.id, String.format("%02d:%02d", mins, secs))
                 }
-                updateTileDisplay(tile.id, "25:00")
+                updateTileDisplay(tile.id, String.format("%02d:00", _focusMinutes.value))
                 _tiles.update { list -> list.map { if (it.id == tile.id) it.copy(isActive = false) else it } }
+                prefs.edit().putBoolean("tile_active_focus_timer", false).apply()
             }
         } else {
-            updateTileDisplay(tile.id, "25:00")
+            updateTileDisplay(tile.id, String.format("%02d:00", _focusMinutes.value))
         }
     }
 

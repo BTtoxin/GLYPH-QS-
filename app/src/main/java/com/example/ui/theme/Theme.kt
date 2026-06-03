@@ -40,18 +40,50 @@ private val DarkColorScheme = darkColorScheme(
     scrim = md_theme_dark_scrim,
 )
 
+private val LightColorScheme = androidx.compose.material3.lightColorScheme(
+    primary = Color.Black,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFEFEFEF),
+    onPrimaryContainer = Color.Black,
+    secondary = md_theme_dark_secondary,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFFFDAD6),
+    onSecondaryContainer = Color.Black,
+    background = Color(0xFFF7F7F7),
+    onBackground = Color.Black,
+    surface = Color.White,
+    onSurface = Color.Black,
+    surfaceVariant = Color(0xFFE5E5E5),
+    onSurfaceVariant = Color(0xFF454545),
+    outline = Color(0xFFCCCCCC),
+    inverseOnSurface = Color.White,
+    inverseSurface = Color.Black,
+    inversePrimary = Color.LightGray,
+    surfaceTint = Color.Black,
+    outlineVariant = Color(0xFFCCCCCC),
+    scrim = Color(0x99000000)
+)
+
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     dynamicColor: Boolean = false, // Force custom theme
     accentColor: Color = md_theme_dark_secondary,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = DarkColorScheme.copy(
-        secondary = accentColor,
-        onSecondaryContainer = accentColor,
-        primary = accentColor // Also set primary for selection components like FilterChip
-    )
+    val colorScheme = if (darkTheme) {
+        DarkColorScheme.copy(
+            secondary = accentColor,
+            onSecondaryContainer = accentColor,
+            primary = accentColor
+        )
+    } else {
+        LightColorScheme.copy(
+            secondary = accentColor,
+            onSecondaryContainer = accentColor,
+            primary = accentColor
+        )
+    }
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,

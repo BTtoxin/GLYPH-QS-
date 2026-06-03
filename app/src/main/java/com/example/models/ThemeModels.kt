@@ -25,5 +25,6 @@ enum class AccentColorType(val displayName: String, val color: Color) {
 data class ThemeState(
     val accentColor: AccentColorType = AccentColorType.RED,
     val backgroundStyle: BackgroundStyle = BackgroundStyle.SOLID_BLACK,
-    val tileShape: TileShape = TileShape.ROUNDED
+    val tileShape: TileShape = TileShape.ROUNDED,
+    val isDarkMode: Boolean = true
 )
