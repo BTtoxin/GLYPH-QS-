@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Glyph QS</string>
+    <string name="device_admin_description">Prevents app uninstallation during active Deep Focus lockdown blocks.</string>
 </resources>

@@ -16,6 +16,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.AirplanemodeActive
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -44,59 +49,40 @@ fun DotMatrixIcon(
     inactiveColor: Color = Color.White,
     modifier: Modifier = Modifier
 ) {
-    val dots = remember(iconType) {
-        when (iconType) {
-            "WIFI" -> listOf(
-                0 to 1, 1 to 0, 2 to 0, 3 to 0, 4 to 0, 5 to 0, 6 to 0, 7 to 0, 8 to 1,
-                2 to 3, 3 to 2, 4 to 2, 5 to 2, 6 to 3,
-                3 to 5, 4 to 4, 5 to 5,
-                4 to 7
-            )
-            "BLUETOOTH" -> listOf(
-                4 to 0, 4 to 1, 4 to 2, 4 to 3, 4 to 4, 4 to 5, 4 to 6, 4 to 7, 4 to 8,
-                5 to 1, 6 to 2, 5 to 3, 5 to 5, 6 to 6, 5 to 7,
-                3 to 2, 2 to 3, 3 to 4,
-                3 to 5, 2 to 6, 3 to 7
-            )
-            "AIRPLANE" -> listOf(
-                4 to 0, 4 to 1, 4 to 2, 3 to 3, 4 to 3, 5 to 3,
-                1 to 4, 2 to 4, 3 to 4, 4 to 4, 5 to 4, 6 to 4, 7 to 4,
-                3 to 5, 4 to 5, 5 to 5,
-                4 to 6, 4 to 7, 3 to 8, 4 to 8, 5 to 8
-            )
-            "DARKMODE" -> listOf(
-                3 to 1, 4 to 1, 5 to 1, 6 to 2, 7 to 3,
-                2 to 2, 2 to 3, 2 to 4, 2 to 5, 3 to 6, 4 to 7, 5 to 7, 6 to 6,
-                4 to 3, 5 to 4, 4 to 5
-            )
-            else -> emptyList()
-        }
+    val icon = when (iconType) {
+        "WIFI" -> Icons.Filled.Wifi
+        "BLUETOOTH" -> Icons.Filled.Bluetooth
+        "AIRPLANE" -> Icons.Filled.AirplanemodeActive
+        "DARKMODE" -> Icons.Filled.DarkMode
+        else -> Icons.Filled.Settings
     }
 
-    val gridWidth = 9
-    val gridHeight = 9
-    val fillTint = if (active) activeColor else inactiveColor
-
-    Canvas(modifier = modifier) {
-        val cellW = size.width / gridWidth
-        val cellH = size.height / gridHeight
-        val radius = minOf(cellW, cellH) * 0.38f
-
-        for (r in 0 until gridHeight) {
-            for (c in 0 until gridWidth) {
-                val isLit = dots.contains(c to r)
-                val dotColor = if (isLit) fillTint else Color.White.copy(alpha = 0.08f)
-                val dotRadius = if (isLit) radius else radius * 0.5f
-                drawCircle(
-                    color = dotColor,
-                    radius = dotRadius,
-                    center = Offset(
-                        x = c * cellW + cellW / 2,
-                        y = r * cellH + cellH / 2
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        // Subtle dotted matrix grid in the background of the icon to preserve Nothing's custom aesthetic
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cellW = size.width / 5
+            val cellH = size.height / 5
+            for (r in 0 until 5) {
+                for (c in 0 until 5) {
+                    drawCircle(
+                        color = if (active) Color.Black.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.12f),
+                        radius = 1.2.dp.toPx(),
+                        center = Offset(c * cellW + cellW / 2, r * cellH + cellH / 2)
                     )
-                )
+                }
             }
         }
+
+        // Beautiful, distinguishable High-Visibility central icon
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (active) activeColor else inactiveColor,
+            modifier = Modifier.fillMaxSize(0.55f)
+        )
     }
 }
 

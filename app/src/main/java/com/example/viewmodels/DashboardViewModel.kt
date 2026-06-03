@@ -361,6 +361,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun setFocusMinutes(minutes: Int) {
         val bounded = minutes.coerceIn(1, 240)
         _focusMinutes.value = bounded
+        prefs.edit().putInt("focus_minutes", bounded).apply()
         // If focus tile is standby, reset its text representation
         _tiles.update { list ->
             list.map {
@@ -375,7 +376,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun toggleAppWhitelist(appName: String) {
         _whitelistedApps.update { current ->
-            if (current.contains(appName)) {
+            val newList = if (current.contains(appName)) {
                 if (appName in listOf("Phone", "Messages", "Settings")) {
                     current // Essential services cannot be removed
                 } else {
@@ -384,6 +385,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 current.plus(appName)
             }
+            prefs.edit().putString("whitelisted_apps_csv", newList.joinToString(",")).apply()
+            newList
         }
     }
 
@@ -471,24 +474,38 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             while (true) {
                 delay(600)
-                if (prefs.getBoolean("tile_active_change_flag", false)) {
-                    prefs.edit().putBoolean("tile_active_change_flag", false).apply()
-                    val remoteFocus = prefs.getBoolean("tile_active_focus_timer", false)
-                    val remoteCaffeine = prefs.getBoolean("caffeine_multiplier", false)
-                    
-                    val focusTile = _tiles.value.find { it.type == TileType.FOCUS_TIMER }
-                    if (focusTile != null && remoteFocus != focusTile.isActive) {
+                
+                val remoteFocus = prefs.getBoolean("tile_active_focus_timer", false)
+                val focusTile = _tiles.value.find { it.type == TileType.FOCUS_TIMER }
+                if (focusTile != null) {
+                    if (remoteFocus != focusTile.isActive) {
                         _tiles.update { list ->
                             list.map {
                                 if (it.type == TileType.FOCUS_TIMER) {
                                     handleFocusTimer(remoteFocus, it)
-                                    it.copy(isActive = remoteFocus)
+                                    it.copy(isActive = remoteFocus, displayValue = if (remoteFocus) it.displayValue else String.format("%02d:00", _focusMinutes.value))
                                 } else {
                                     it
                                 }
                             }
                         }
                     }
+                    if (remoteFocus) {
+                        val remainingSecs = prefs.getInt("focus_seconds_remaining", 0)
+                        if (remainingSecs > 0) {
+                            val m = remainingSecs / 60
+                            val s = remainingSecs % 60
+                            val formatted = String.format("%02d:%02d", m, s)
+                            if (focusTile.displayValue != formatted) {
+                                updateTileDisplayDirect(TileType.FOCUS_TIMER, formatted)
+                            }
+                        }
+                    }
+                }
+
+                if (prefs.getBoolean("tile_active_change_flag", false)) {
+                    prefs.edit().putBoolean("tile_active_change_flag", false).apply()
+                    val remoteCaffeine = prefs.getBoolean("caffeine_multiplier", false)
 
                     val caffeineTile = _tiles.value.find { it.type == TileType.CAFFEINE }
                     if (caffeineTile != null && remoteCaffeine != caffeineTile.isActive) {
@@ -554,6 +571,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             statsMap[type] = count
         }
         _useCount.value = statsMap
+        _focusMinutes.value = prefs.getInt("focus_minutes", 25)
+        val rawSavedList = prefs.getString("whitelisted_apps_csv", "Phone,Messages,Settings,Maps,Clock") ?: "Phone,Messages,Settings,Maps,Clock"
+        _whitelistedApps.value = rawSavedList.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         loadScenarios()
     }
 
@@ -1101,94 +1121,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun handleFocusTimer(isActive: Boolean, tile: DashboardTile) {
-        focusTimerJob?.cancel()
         val application = getApplication<Application>()
-        val nm = application.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-        val am = application.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
-        
         try {
-            if (isActive) {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    if (nm != null && nm.isNotificationPolicyAccessGranted) {
-                        nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_NONE)
-                    }
-                } else {
-                    am?.ringerMode = android.media.AudioManager.RINGER_MODE_SILENT
-                }
-                Toast.makeText(application, "Deep Focus active: Do Not Disturb active", Toast.LENGTH_SHORT).show()
+            val intent = Intent(application, com.example.services.StrictFocusService::class.java).apply {
+                action = if (isActive) com.example.services.StrictFocusService.ACTION_START else com.example.services.StrictFocusService.ACTION_STOP
+                putExtra("focus_minutes", _focusMinutes.value)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                application.startForegroundService(intent)
             } else {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    if (nm != null && nm.isNotificationPolicyAccessGranted) {
-                        nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
-                    }
-                } else {
-                    am?.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
-                }
-                Toast.makeText(application, "Deep Focus completed / stopped. DND off", Toast.LENGTH_SHORT).show()
+                application.startService(intent)
             }
-        } catch (e: Exception) { e.printStackTrace() }
-
-        if (isActive) {
-            var timeLeft = _focusMinutes.value * 60
-            focusTimerJob = viewModelScope.launch {
-                while (timeLeft > 0) {
-                    delay(1000)
-                    timeLeft--
-                    val mins = timeLeft / 60
-                    val secs = timeLeft % 60
-                    updateTileDisplay(tile.id, String.format("%02d:%02d", mins, secs))
-
-                    // System-wide deep focus lock check
-                    if (hasUsageStatsPermission()) {
-                        try {
-                            val usm = application.getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
-                            if (usm != null) {
-                                val time = System.currentTimeMillis()
-                                val stats = usm.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, time - 3000, time)
-                                if (!stats.isNullOrEmpty()) {
-                                    val top = stats.sortedBy { it.lastTimeUsed }.lastOrNull()?.packageName
-                                    if (top != null && top != application.packageName) {
-                                        // Is it a banking/financial app?
-                                        if (isBankingApp(top)) {
-                                            // 100% EXCLUDE: Safeguard bypass for bank apps to guarantee security with no threat alerts
-                                        } else if (isProductiveApp(top)) {
-                                            // Whitelisted: Allow user to work
-                                        } else {
-                                            // Blocked app or game! Re-assert lockout and trigger overlay block screen!
-                                            val now = System.currentTimeMillis()
-                                            if (top != lastBlockedPkg || (now - lastBlockTimestamp) > 4000) {
-                                                lastBlockedPkg = top
-                                                lastBlockTimestamp = now
-                                                incrementBlockedAppsCount(top)
-                                                launchLockoutScreen(application, top)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (ex: Exception) {
-                            ex.printStackTrace()
-                        }
-                    }
-                }
-                
-                // turn off DND once timer completes naturally
-                try {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                        if (nm != null && nm.isNotificationPolicyAccessGranted) {
-                            nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
-                        }
-                    } else {
-                        am?.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
-                    }
-                } catch (e: Exception) { e.printStackTrace() }
-
-                updateTileDisplay(tile.id, String.format("%02d:00", _focusMinutes.value))
-                _tiles.update { list -> list.map { if (it.id == tile.id) it.copy(isActive = false) else it } }
-                prefs.edit().putBoolean("tile_active_focus_timer", false).apply()
-            }
-        } else {
-            updateTileDisplay(tile.id, String.format("%02d:00", _focusMinutes.value))
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
