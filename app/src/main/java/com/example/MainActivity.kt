@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
     if (intent == null) return
     val blockTriggered = intent.getBooleanExtra("SYSTEM_BLOCK_TRIGGERED", false)
     if (blockTriggered) {
+      intent.removeExtra("SYSTEM_BLOCK_TRIGGERED")
       val blockedPkg = intent.getStringExtra("BLOCKED_PACKAGE_NAME") ?: "App"
       val friendlyName = viewModel.getFriendlyAppName(blockedPkg)
       

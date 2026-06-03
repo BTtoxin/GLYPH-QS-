@@ -612,10 +612,27 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun registerBatteryReceiver() {
         try {
-            getApplication<Application>().registerReceiver(
-                batteryReceiver,
-                IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-            )
+            val context = getApplication<Application>()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                // Since ACTION_BATTERY_CHANGED is a system broadcast, wait, is it possible to register as RECEIVER_NOT_EXPORTED? Yes.
+                // Or if it needs to be exported, but Android 14 says: "system broadcasts can be registered with RECEIVER_NOT_EXPORTED or RECEIVER_EXPORTED".
+                // To be safe, we register as RECEIVER_NOT_EXPORTED
+                val flag = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    Context.RECEIVER_NOT_EXPORTED
+                } else {
+                    0
+                }
+                context.registerReceiver(
+                    batteryReceiver,
+                    IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                    flag
+                )
+            } else {
+                context.registerReceiver(
+                    batteryReceiver,
+                    IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+                )
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -983,6 +1000,80 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun isBankingApp(packageName: String): Boolean {
+        val lower = packageName.lowercase()
+        val bankKeywords = listOf(
+            "bank", "banking", "finance", "payment", "chase", "hsbc", "citibank", "capone",
+            "wells_fargo", "wf", "paypal", "gpay", "wallet", "barclays", "bofa", "ally", "revolut",
+            "stripe", "venmo", "paytm", "bhim", "upi", "hdfc", "icici", "sbi", "axis", "yono", "cred",
+            "cashapp", "robinhood", "coinbase"
+        )
+        return bankKeywords.any { lower.contains(it) }
+    }
+
+    fun isProductiveApp(packageName: String): Boolean {
+        val lower = packageName.lowercase()
+        val context = getApplication<Application>()
+        
+        // Essential system components are ALWAYS allowed to prevent soft locking the device
+        if (lower.contains("systemui") || 
+            lower.contains("launcher") || 
+            lower.contains("packageinstaller") || 
+            lower.contains("permissioncontroller") ||
+            lower == "android"
+        ) {
+            return true
+        }
+
+        // Dynamically allow the active home screen (launcher) to prevent soft locking
+        try {
+            val intent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+            }
+            val resolveInfo = context.packageManager.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            val launcherPackage = resolveInfo?.activityInfo?.packageName?.lowercase()
+            if (launcherPackage != null && lower == launcherPackage) {
+                return true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        
+        // Resolve friendly mapping which users can toggle in their whitelisting UI
+        val mappedName = when {
+            lower.contains("dialer") || lower.contains("phone") || lower.contains("telecom") -> "Phone"
+            lower.contains("messaging") || lower.contains("mms") || lower.contains("message") -> "Messages"
+            lower.contains("settings") -> "Settings"
+            lower.contains("maps") -> "Maps"
+            lower.contains("deskclock") || lower.contains("clock") -> "Clock"
+            lower.contains("spotify") || lower.contains("music") -> "Spotify"
+            lower.contains("calculator") -> "Calculator"
+            lower.contains("whatsapp") -> "WhatsApp"
+            lower.contains("youtube") -> "YouTube"
+            lower.contains("chrome") || lower.contains("browser") -> "Chrome"
+            else -> null
+        }
+        
+        if (mappedName != null) {
+            return _whitelistedApps.value.contains(mappedName)
+        }
+        
+        return false
+    }
+
+    fun launchLockoutScreen(context: Context, blockedPkg: String) {
+        try {
+            val intent = Intent(context, Class.forName("com.example.MainActivity")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("SYSTEM_BLOCK_TRIGGERED", true)
+                putExtra("BLOCKED_PACKAGE_NAME", blockedPkg)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun handleFocusTimer(isActive: Boolean, tile: DashboardTile) {
         focusTimerJob?.cancel()
         val application = getApplication<Application>()
@@ -1020,6 +1111,34 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     val mins = timeLeft / 60
                     val secs = timeLeft % 60
                     updateTileDisplay(tile.id, String.format("%02d:%02d", mins, secs))
+
+                    // System-wide deep focus lock check
+                    if (hasUsageStatsPermission()) {
+                        try {
+                            val usm = application.getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+                            if (usm != null) {
+                                val time = System.currentTimeMillis()
+                                val stats = usm.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, time - 3000, time)
+                                if (!stats.isNullOrEmpty()) {
+                                    val top = stats.sortedBy { it.lastTimeUsed }.lastOrNull()?.packageName
+                                    if (top != null && top != application.packageName) {
+                                        // Is it a banking/financial app?
+                                        if (isBankingApp(top)) {
+                                            // 100% EXCLUDE: Safeguard bypass for bank apps to guarantee security with no threat alerts
+                                        } else if (isProductiveApp(top)) {
+                                            // Whitelisted: Allow user to work
+                                        } else {
+                                            // Blocked app or game! Re-assert lockout and trigger overlay block screen!
+                                            incrementBlockedAppsCount(top)
+                                            launchLockoutScreen(application, top)
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (ex: Exception) {
+                            ex.printStackTrace()
+                        }
+                    }
                 }
                 
                 // turn off DND once timer completes naturally
